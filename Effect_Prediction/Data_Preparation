@@ -1,0 +1,233 @@
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(standardize)
+
+#effect data prep
+rawdata <- read_excel("Effect_Data_for_all_Analyses.xlsx")
+
+chem.2017 <- read_excel("Chemistry Compiled_Final.xlsx", "2017")
+chem.2018 <- read_excel("Chemistry Compiled_Final.xlsx", "2018")
+
+#detect data - wide 
+detect.2017 <- chem.2017 %>% filter(Media == "Water", Detect == "Yes", !Site %in% c("MIM-BK", "UWM")) %>% select(Site, Chemical, detect.con.ppb)
+detect.wide.2017 <- detect.2017 %>% spread(Chemical, detect.con.ppb)
+detect.wide.2017[is.na(detect.wide.2017)] <- 0
+detect.wide.2017 <- as.data.frame(detect.wide.2017)
+
+detect.2018 <- chem.2018 %>% filter(Detect == "Yes", !Site %in% c("MIM-BK", "UWM")) %>% select(Site, Chemical, detect.con.ppb)
+detect.wide.2018 <- detect.2018 %>% distinct() %>% spread(Chemical, detect.con.ppb)
+detect.wide.2018[is.na(detect.wide.2018)] <- 0
+detect.wide.2018 <- as.data.frame((detect.wide.2018))
+
+detect.2017.mod <- detect.wide.2017
+detect.2018.mod <- detect.wide.2018
+detect.2017.mod$Year <- "2017"
+detect.2018.mod$Year <- "2018"
+detect.2017.mod <- detect.2017.mod %>% relocate("Year", .after = "Site")
+detect.2018.mod <- detect.2018.mod %>% relocate("Year", .after = "Site")
+
+detect.all.years <- bind_rows(detect.2017.mod, detect.2018.mod)
+detect.all.years[is.na(detect.all.years)] <- 0
+sum(is.na(detect.all.years))
+
+names(detect.all.years)
+
+#format data for qPCR analyses - standardize concentrations to control 
+
+#2017 
+names(detect.wide.2017)
+detect.long <- detect.wide.2017 %>% gather(Chemical, concentration, "1-Methylnaphthalene":"Venlafaxine")
+
+detect.con <- detect.long %>% filter(Site == "MED") %>% rename("con.con" = "concentration") %>% select(-Site)
+detect.long1 <- left_join(detect.long, detect.con, by = "Chemical")
+detect.long1$standardized <- (detect.long1$concentration +1) / (detect.long1$con.con+1)
+qpcr.chem.2017 <- detect.long1 %>% select(Site, Chemical, standardized) %>% spread(Chemical, standardized)
+
+#2018
+names(detect.wide.2018)
+detect.long.2018 <- detect.wide.2018 %>% gather(Chemical, concentration, "1-Methylnaphthalene":"Venlafaxine")
+detect.long.2018.1 <- detect.long.2018
+detect.long.2018.1$standardized <- detect.long.2018.1$concentration + 1
+detect.long.2018_chemlist <- detect.long.2018 %>% select(Chemical)
+
+detect.long.2018_chemlist$Site <- "MED"
+detect.long.2018_chemlist$standardized <- 1
+
+detect.long.2018.2 <- bind_rows(detect.long.2018.1, detect.long.2018_chemlist) %>% distinct()
+
+qpcr.chem.2018 <- detect.long.2018.2 %>% select(Site, Chemical, standardized) %>% spread(Chemical, standardized)
+
+#bind together data and chemistry 
+
+###QPCR##
+#CYP1A1-intestine 2017
+
+cyp.1a1.2017.intest <- rawdata %>% filter(`Assay Name` == "qPCR", Year == "2017", Measurement == "CYP1A1_intestine", !Site %in% c("UWM")) %>% select("Site", "Effect")
+
+CYP1A1.intestine <- left_join(cyp.1a1.2017.intest, qpcr.chem.2017, by = "Site")
+unique(CYP1A1.intestine$Site)
+summary(CYP1A1.intestine)
+
+#CYP1A1 - liver 2017
+cyp_1a1_2017_liver <- rawdata %>% filter(`Assay Name` == "qPCR", Year =="2017", Measurement == "CYP1A1_liver", Site != "UWM") %>% select("Site", "Effect")
+cyp_1a1_2017_liver <- left_join(cyp_1a1_2017_liver, qpcr.chem.2017, by = "Site")
+
+#CYP2AD6
+cyp_2ad6_2017 <- rawdata %>% filter(`Assay Name` == "qPCR", Year == "2017", Measurement == "CYP2AD6_intestine", Site != "UWM") %>% select("Site", "Effect") 
+cyp_2ad6_2017 <- left_join(cyp_2ad6_2017, qpcr.chem.2017, by = "Site")
+View(cyp_2ad6_2017)
+unique(cyp_2ad6_2017$Site)
+
+#CYP2N13
+cyp_2n13_2017 <- rawdata %>% filter(`Assay Name` == "qPCR", Year == "2017", Measurement == "CYP2N13_intestine",Site != "UWM") %>% select("Site", "Effect")
+cyp_2n13_2017 <- left_join(cyp_2n13_2017, qpcr.chem.2017, by = "Site")
+View(cyp_2n13_2017)
+unique(cyp_2n13_2017$Site)
+
+#UGT liver
+ugt_1a1_liver <- rawdata %>% filter(`Assay Name` == "qPCR", Year == "2017", Measurement == "UGT1A1_liver", Site != "UWM") %>% select("Site","Effect")
+ugt_1a1_liver <- left_join(ugt_1a1_liver, qpcr.chem.2017)
+
+#UGT intestine
+ugt_1a1_intestine <- rawdata %>% filter(`Assay Name` == "qPCR", Year == "2017", Measurement == "UGT1A1_intestine", Site != "UWM") %>% select("Site","Effect")
+ugt_1a1_intestine <- left_join(ugt_1a1_intestine, qpcr.chem.2017)
+
+#CYP3A - liver
+cyp_3A_liver <- rawdata %>% filter(`Assay Name` == "qPCR", Year == "2017", Measurement == "CYP3A_liver", Site != "UWM") %>% select("Site", "Effect")
+cyp_3A_liver <- left_join(cyp_3A_liver, qpcr.chem.2017, by = "Site")
+unique(cyp_3A_liver$Site)
+
+#CYP3A - intestine
+CYP_3A_intestine <- rawdata %>% filter(`Assay Name` == "qPCR", Year == "2017", Measurement == "CYP3A_intestine", Site != "UWM") %>% select("Site", "Effect")
+CYP_3A_intestine <- left_join(CYP_3A_intestine, qpcr.chem.2017, by = "Site")
+View(CYP_3A_intestine)
+unique(CYP_3A_intestine$Site)
+
+#CYP1A1 - 2018
+cyp1a1_2018 <- rawdata %>% filter(`Assay Name` == "qPCR", Year == "2018", Measurement == "CYP1A1_liver", !Site %in% c("UWM")) %>% select("Site","Effect")
+cyp1a1_2018 <- left_join(cyp1a1_2018, qpcr.chem.2018, by = "Site")
+unique(cyp1a1_2018$Site)
+summary(cyp1a1_2018)
+
+
+###attagene####
+list(unique(rawdata$`Assay Name`))
+atg <- rawdata %>% filter(`Assay Name` %in% c("Attagene GPCR-Factorial", "Attagene cis-Factorial", "Attagene trans-Factorial"))
+View(atg)
+list(unique(atg$Measurement))
+#AhR
+ahr <- atg %>% filter(Measurement == "Aryl hydrocarbon Receptor (AhR)", !Site %in% c("UWM", "Blank")) %>% select(Site, Effect, Year)
+ahr$Year <- as.character(ahr$Year)
+ahr <- left_join(ahr, detect.all.years, by = c("Site", "Year"))
+ahr[is.na(ahr)] <- 0
+
+PXR_cis <- atg %>% filter(`Assay Name` %in% c("Attagene cis-Factorial"),Measurement == "Pregnane-X-Receptor (PXR)",!Site %in% c("UWM", "Blank")) %>% select(Site, Effect, Year)
+PXR_cis$Year <- as.character(PXR_cis$Year)
+PXR_cis <- left_join(PXR_cis, detect.all.years, by = c("Site", "Year"))
+PXR_cis[is.na(PXR_cis)] <- 0
+
+PXR_trans <- atg %>% filter(`Assay Name` %in% c("Attagene trans-Factorial"),Measurement == "Pregnane-X-Receptor (PXR)", !Site %in% c("UWM", "Blank")) %>% select(Site, Effect, Year)
+PXR_trans$Year <- as.character(PXR_trans$Year)
+PXR_trans <- left_join(PXR_trans, detect.all.years, by = c("Site", "Year"))
+PXR_trans[is.na(PXR_trans)] <- 0
+
+ERa <- atg %>% filter(Measurement == "Estrogen Receptor alpha (ERa)" , !Site %in% c("UWM", "Blank")) %>% select(Site, Effect, Year)
+ERa$Year <- as.character(ERa$Year)
+ERa <- left_join(ERa, detect.all.years, by = c("Site", "Year"))
+ERa[is.na(ERa)] <- 0
+
+ERE <- atg %>% filter(Measurement == "Estrogen Response Element (ERE)" , !Site %in% c("UWM", "Blank")) %>% select(Site, Effect, Year)
+ERE$Year <- as.character(ERE$Year)
+ERE <- left_join(ERE, detect.all.years, by = c("Site", "Year"))
+ERE[is.na(ERE)] <- 0
+
+PPARg <- rawdata %>% filter(Measurement == "Peroxisome proliferator-activated receptor-gamma (PPARg)", !Site %in% c("UWM", "Blank")) %>% select(Site, Effect, Year)
+PPARg$Year <- as.character(PPARg$Year)
+PPARg <- left_join(PPARg, detect.all.years, by = c("Site", "Year"))
+PPARg[is.na(PPARg)] <- 0
+
+#PTGER2
+PTGER2 <- atg %>% filter(Measurement == "Prostaglandin E Receptor 2 (PTGER2)", !Site %in% c("UWM", "Blank")) %>% select(Site, Effect, Year)
+PTGER2$Year <- as.character(PTGER2$Year)
+PTGER2 <- left_join(PTGER2, detect.all.years, by = c("Site", "Year"))
+PTGER2[is.na(PTGER2)] <- 0
+
+ADRB1 <- rawdata %>% filter(Measurement == "Adrenoceptor Beta 1 (ADRB1)", !Site %in% c("UWM", "Blank")) %>% select(Site, Effect, Year)
+ADRB1$Year <- as.character(ADRB1$Year)
+ADRB1 <- left_join(ADRB1, detect.all.years, by = c("Site", "Year"))
+ADRB1[is.na(ADRB1)] <- 0
+
+GR <- rawdata %>% filter(Measurement == "Glucocorticoid Receptor (GR)", !Site %in% c("UWM", "Blank")) %>% select(Site, Effect, Year)
+GR$Year <- as.character(GR$Year)
+GR <- left_join(GR, detect.all.years, by = c("Site", "Year"))
+GR[is.na(GR)] <- 0
+
+MC1R <- rawdata %>% filter(Measurement == "Melanocortin 1 Receptor (MC1R)", !Site %in% c("UWM", "Blank")) %>% select(Site, Effect, Year)
+MC1R$Year <- as.character(MC1R$Year)
+MC1R <- left_join(MC1R, detect.all.years, by = c("Site", "Year"))
+MC1R[is.na(MC1R)] <- 0
+
+ARE <- rawdata %>% filter(Measurement == "Antioxidant Response Element (ARE)-binding Nuclear factor (erythroid-derived 2)-like 2 (NRF2) (NRF2/ARE)", !Site %in% c("UWM", "Blank")) %>% select(Site, Effect, Year)
+ARE$Year <- as.character(ARE$Year)
+ARE <- left_join(ARE, detect.all.years, by = c("Site", "Year"))
+ARE[is.na(ARE)] <- 0
+
+PPARa <- rawdata %>% filter(Measurement == "Peroxisome proliferator-activated receptor-a  (PPARa)", !Site %in% c("UWM", "Blank")) %>% select(Site, Effect, Year)
+PPARa$Year <- as.character(PPARa$Year)
+PPARa <- left_join(PPARa, detect.all.years, by = c("Site", "Year"))
+PPARa[is.na(PPARa)] <- 0
+
+PPRE <- rawdata %>% filter(Measurement == "Peroxisome proliferator activating receptor (PPRE)", !Site %in% c("UWM", "Blank")) %>% select(Site, Effect, Year)
+PPRE$Year <- as.character(PPRE$Year)
+PPRE <- left_join(PPRE, detect.all.years, by = c("Site", "Year"))
+PPRE[is.na(PPRE)] <- 0
+
+PTGDR <- rawdata %>% filter(Measurement == "Prostaglandin D2 Receptor (PTGDR)", !Site %in% c("UWM", "Blank")) %>% select(Site, Effect, Year)
+PTGDR$Year <- as.character(PTGDR$Year)
+PTGDR <- left_join(PTGDR, detect.all.years, by = c("Site", "Year"))
+PTGDR[is.na(PTGDR)] <- 0
+
+PTGIR <- rawdata %>% filter(Measurement == "Prostaglandin I2 Receptor (PTGIR)", !Site %in% c("UWM", "Blank")) %>% select(Site, Effect, Year)
+PTGIR$Year <- as.character(PTGIR$Year)
+PTGIR <- left_join(PTGIR, detect.all.years, by = c("Site", "Year"))
+PTGIR[is.na(PTGIR)] <- 0
+
+RXRb <- rawdata %>% filter(Measurement == "Retinoid X receptor-b (RXRb)", !Site %in% c("UWM", "Blank")) %>% select(Site, Effect, Year)
+RXRb$Year <- as.character(RXRb$Year)
+RXRb <- left_join(RXRb, detect.all.years, by = c("Site", "Year"))
+RXRb[is.na(RXRb)] <- 0
+
+###t47####
+list(unique(rawdata$`Assay Name`))
+t47 <- rawdata %>% filter(`Assay Name` == "T47D-kBluc", Year == "2018")
+
+t47 <- t47 %>% select(Site, Effect)
+t47 <- left_join(t47, detect.wide.2018)
+unique(t47$Site)
+
+t47.2017 <- rawdata %>% filter(`Assay Name` == "T47D-kBluc", Year == "2017")
+
+t47.2017 <- t47.2017 %>% select(Site, Effect)
+t47.2017 <- left_join(t47.2017, detect.wide.2017)
+
+t47.all.years <- rawdata %>% filter(`Assay Name` == "T47D-kBluc",  !Site %in%c("UWM", "BK", "MQ-BK"))
+t47.all.years <- t47.all.years %>% select(Site, Effect, Year)
+t47.all.years$Year <- as.character(t47.all.years$Year)
+
+t47.allyears <- left_join(t47.all.years, detect.all.years, by = c("Site", "Year")) 
+View(t47.allyears)
+t47.allyears[is.na(t47.allyears)] <- 0
+
+##RIA##
+View(rawdata)
+RIA <- rawdata %>% filter(`Assay Name` == "RIA", `Sample Type` == "Male Fathead Minnow Serum",
+                          Measurement == "17b_estradiol", Site != "UWM") %>% select(Site, Effect)
+RIA <- left_join(RIA, detect.wide.2017)
+View(RIA)
+
+RIA_F <- rawdata %>% filter(`Assay Name` == "RIA", `Sample Type` == "Female Fathead Minnow Serum",
+                            Measurement == "17b_estradiol", Site != "UWM") %>% select(Site, Effect)
+
+RIA_F <- left_join(RIA_F, detect.wide.2017)
+View(RIA_F)
