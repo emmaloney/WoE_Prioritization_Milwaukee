@@ -1,0 +1,140 @@
+##Detection Frequency, Spatiotemporal Trends
+library(readxl)
+library(writexl)
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+library(viridis)
+
+chem.2017 <- read_excel("Chemistry Compiled_Final.xlsx", "2017")
+chem.2018 <- read_excel("Chemistry Compiled_Final.xlsx", "2018")
+
+chem.2017.summary <- chem.2017 %>% filter(!Site %in% c("MIM-BK", "UWM", "MED") ) %>% select(Site, Chemical, CAS, Detect, detect.con.ppb, Media, Year)
+chem.2018.summary <- chem.2018 %>% filter(!Site %in% c("MED", "UWM")) %>% select(Site, Chemical, CAS, Detect, detect.con.ppb, Media, Year)
+
+chem.all.summary <- rbind(chem.2017.summary, chem.2018.summary)
+detects.only <- chem.all.summary %>% filter(Detect == "Yes") %>% distinct()
+View(detects.only)
+
+#list of unique chemicals detected in dataset#
+
+chem_unique <- detects.only %>% filter(Media == "Water") %>% group_by(CAS) %>% summarize(unique(Chemical))
+
+write.csv(chem_unique, "Chemicals Detected in Milwaukee Estuary AOC.csv")
+
+#spatial frequency#
+spatial.frequency <- detects.only %>% group_by(Media, Chemical, CAS) %>% summarise(n.site = length(unique(Site))) %>% arrange(desc(n.site))
+spatial.frequency$freq.s <-spatial.frequency$n.site * (1/11)
+
+spatial.frequency.h2o <- spatial.frequency %>% filter(Media == "Water")
+View(spatial.frequency.h2o)
+
+temporal.frequency <- detects.only %>% group_by(Media, Chemical, CAS) %>% summarise(n.years = length(unique(Year))) %>% arrange(desc(n.years))
+temporal.frequency$freq.t <- temporal.frequency$n.years *(1/2)
+temporal.frequency.h2o <- temporal.frequency %>% filter(Media == "Water")
+View(temporal.frequency.h2o)
+
+environmental.compartment <- detects.only %>% group_by(Chemical, CAS, Year) %>% summarise(n.compartments = length(unique(Media))) %>% arrange(desc(n.compartments))
+environmental.compartment <- environmental.compartment %>% filter(Year == 2017) %>% select(-Year)
+View(environmental.compartment)
+
+frequency.eval <- left_join(spatial.frequency.h2o, temporal.frequency.h2o, by = c("Chemical", "CAS", "Media"))
+frequency.eval.v1 <- left_join(frequency.eval, environmental.compartment)
+frequency.eval.v1$n.compartments <- frequency.eval.v1$n.compartments %>% replace_na(1)
+View(frequency.eval.v1)
+
+same.site <- detects.only %>% group_by(Chemical, CAS) %>% filter(Media == "Water") %>% summarise(unique.sites = length(unique(Site)), nsites = length(Site))
+same.site$repeat.site <- same.site$nsites - same.site$unique.sites
+same.site <- select(same.site, -unique.sites, -nsites)
+View(same.site)
+
+frequency.eval.v2 <- left_join(frequency.eval.v1, same.site, by = c("CAS", "Chemical"))
+frequency.eval.v3 <- frequency.eval.v2 %>% ungroup() %>% select(-Media)
+View(frequency.eval.v3)
+
+frequency.eval.v4 <- frequency.eval.v3
+frequency.eval.v4$`Temporal Frequency` <- ifelse(frequency.eval.v4$repeat.site >= 1, 10, 
+                                                 ifelse((frequency.eval.v4$repeat.site == 0 & frequency.eval.v4$freq.t == 1), 5, 0))
+frequency.eval.v4$`Spatial Frequency` <- ifelse(frequency.eval.v4$freq.s >= 0.5, 10, 
+                                                 ifelse((frequency.eval.v4$freq.s >= 0.2 & frequency.eval.v4$freq.s < 0.5), 5, 0))
+frequency.eval.v4$`Environmental Compartment` <- ifelse(frequency.eval.v4$n.compartments == 3, 10, 
+                                                ifelse((frequency.eval.v4$n.compartments == 2), 5, 0))
+
+frequency.eval.v4$freq.t <- frequency.eval.v4$repeat.site/11
+
+frequency.eval.v4$freq.s <- frequency.eval.v4$freq.s * 100
+frequency.eval.v4$`Spatial Frequency Classification` <- ifelse(frequency.eval.v4$freq.s >= 50, "High Frequency",
+                                                               ifelse(frequency.eval.v4$freq.s < 20, "Low Frequency", "Medium Frequency"))
+frequency.eval.v4$freq.t <- frequency.eval.v4$freq.t * 100
+frequency.eval.v4$`Temporal Frequency Classification` <- ifelse(frequency.eval.v4$`Temporal Frequency` == 10, "High Frequency",
+                                                                ifelse(frequency.eval.v4$`Temporal Frequency` == 5, "Medium Frequency", "Low Frequency"))
+View(frequency.eval.v4)
+
+write_xlsx(frequency.eval.v4, "frequency.rough.xlsx")
+
+names(frequency.eval.v4)
+
+frequency.eval.v5 <- frequency.eval.v4 %>% relocate("CAS", .before = "Chemical") %>% rename("Chemical Name" = "Chemical", "Number of Unique Detection Sites (n(u.Sites))" = "n.site", "Spatial Frequency (%)" = "freq.s") %>%
+  relocate("Spatial Frequency Classification", .after = "Spatial Frequency (%)") %>% relocate("Spatial Frequency", .after = "Spatial Frequency Classification") %>% 
+  rename("PSdetectSF" = "Spatial Frequency") %>% relocate("n.years", .after = "PSdetectSF") %>% rename("Number of Study Years Detected" = "n.years", "Frequency of Repeat Detection (%)" = "freq.t", "PSdetectTF" = "Temporal Frequency") %>% 
+  relocate("Frequency of Repeat Detection (%)", .after = "Number of Study Years Detected") %>% relocate("PSdetectTF", .after = "Frequency of Repeat Detection (%)") %>% 
+  relocate("Temporal Frequency Classification", .before = "PSdetectTF") %>% rename("Number of Environmental Compartments Detected" = "n.compartments", "PSdetectEC" = "Environmental Compartment") %>%
+  select(-repeat.site)
+
+frequency.eval.v5$`Environmental Compartments` <- ifelse(frequency.eval.v5$`Number of Environmental Compartments Detected` == 2, "Sediment + Water", "Water")
+frequency.eval.v6 <- relocate(frequency.eval.v5, "Environmental Compartments", .before = "PSdetectEC")
+View(frequency.eval.v6)
+
+
+write_xlsx(frequency.eval.v6, "frequency.pretty.xlsx")
+
+##graph
+#spatial
+spatial <- frequency.eval.v4 
+spatial$`Spatial Frequency` <- ifelse(spatial$freq.s >= 50, "High Frequency", 
+                                      (ifelse(spatial$freq.s < 20, "Low Frequency", "Medium Frequency")))
+spatial$`Spatial Frequency` <- factor(spatial$`Spatial Frequency`, levels = c("Low Frequency", "Medium Frequency", "High Frequency"))
+spatial$Chemical <- gsub("Hexahydrohexamethylcyclopentabenzopyran", "HHCB", spatial$Chemical)
+spatial.plot <- spatial %>% ggbarplot(x = "Chemical", y = "freq.s", fill = "Spatial Frequency", orientation = "horiz", xlab = "Chemical", ylab = "Frequency of Detection", sort.val = "asc", ggtheme = theme_classic2()) + font("xy.text", size = 25) + font("xlab", size = 35) + font("ylab", size = 35)+ font("title", size = 40)+ font("legend.text", size = 25) + font("legend.title", size = 30) + scale_fill_viridis_d()
+ggsave("spatial_frequency_plot.jpeg", width = 20, height = 25)
+
+spatial$`Spatial Frequency Classification`<- as.factor(spatial$`Spatial Frequency Classification`)
+summary(spatial$`Spatial Frequency Classification`)
+
+temporal <- frequency.eval.v4  
+temporal$`Temporal Frequency` <- ifelse(temporal$repeat.site > 0, "High Frequency",
+                                        (ifelse((temporal$n.years == 2 & temporal$repeat.site == 0), "Medium Frequency", "Low Frequency")))
+temporal$`Temporal Frequency` <- factor(temporal$`Temporal Frequency`, levels = c("Low Frequency", "Medium Frequency", "High Frequency"))
+temporal$`Frequency of Repeat Detection` <- temporal$repeat.site * (1/11)
+temporal$`Frequency of Repeat Detection` <- round(temporal$`Frequency of Repeat Detection` , digits = 2)
+temporal$`Frequency of Repeat Detection` <- as.factor(temporal$`Frequency of Repeat Detection`)
+temporal$`Frequency of Repeat Detection` <- as.numeric(temporal$`Frequency of Repeat Detection`)
+temporal$`Frequency of Repeat Detection X Study Years` <- (temporal$`Frequency of Repeat Detection` + 1) * temporal$n.years
+temporal$`Frequency of Repeat Detection X Study Years` <- as.factor(temporal$`Frequency of Repeat Detection X Study Years`)
+View(temporal)
+temporal$`Frequency of Repeat Detection` <- ifelse(temporal$`Frequency of Repeat Detection X Study Years` %in% c(2,3), "0 (not repeated)",
+                                        ifelse(temporal$`Frequency of Repeat Detection X Study Years` == 4, "0 (repeated)", 
+                                               ifelse(temporal$`Frequency of Repeat Detection X Study Years` == 6, "0.09", 
+                                                      ifelse(temporal$`Frequency of Repeat Detection X Study Years` == 8, "0.18",
+                                                             ifelse(temporal$`Frequency of Repeat Detection X Study Years` == 10, "0.27",
+                                                                    ifelse(temporal$`Frequency of Repeat Detection X Study Years` == 12, "0.36",
+                                                                           ifelse(temporal$`Frequency of Repeat Detection X Study Years`== 14, "0.45",
+                                                                                  ifelse(temporal$`Frequency of Repeat Detection X Study Years` == 16, "0.55",
+                                                                                         ifelse(temporal$`Frequency of Repeat Detection X Study Years` == 18, "0.65", 
+                                                                                                ifelse(temporal$`Frequency of Repeat Detection X Study Years` == 20, "0.73", "NA"))))))))))
+temporal.plot <- temporal %>% ggbarplot(x = "Chemical", y = "n.years", fill = "Frequency of Repeat Detection", orientation = "horiz", sort.val = "asc", xlab = "Chemical", ylab = "Detection Years (n)", ggtheme = theme_classic2()) + font("xy.text", size = 25) + font("xlab", size = 35) + font("ylab", size = 35)+ font("title", size = 40)+ font("legend.text", size = 25) + font("legend.title", size = 30) + scale_y_continuous(breaks = seq(from = 0, to = 2.0, by = 1.0)) + scale_fill_viridis_d()
+ggsave("temporal_frequency_plot.jpeg", width = 20, height = 25)
+
+temporal$`Temporal Frequency Classification` <- as.factor(temporal$`Temporal Frequency Classification`)
+summary(temporal$`Temporal Frequency Classification`)
+ 
+compartment <- frequency.eval.v4 %>% filter(n.compartments >= 1)
+compartment$Compartment <- ifelse(compartment$n.compartments == 2, "Sediment + Water", "Water")
+compartment$`Compartment` <- factor(compartment$`Compartment`, levels = c("Water", "Sediment + Water"))
+compartment.plot <- compartment %>% ggbarplot(x = "Chemical", y = "n.compartments", fill = "Compartment", orientation = "horiz", sort.val = "asc", xlab = "Chemical", ylab = "Environmental Compartments (n)", ggtheme = theme_classic2())+ font("xy.text", size = 25) + font("xlab", size = 35) + font("ylab", size = 35)+ font("title", size = 40)+ font("legend.text", size = 25) + font("legend.title", size = 30) + scale_fill_viridis_d()
+ggsave("compartment.plot.jpeg", width = 20, height = 25)
+
+summary(compartment$Compartment)
+grid.arrange(spatial.plot, temporal.plot, compartment.plot, nrow = 1)
