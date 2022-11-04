@@ -1,0 +1,689 @@
+library(tidyr)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(writexl)
+library(stringr)
+library(xlsx)
+library(rJava)
+library(ggpubr)
+
+#read in ECOTOX data
+
+aq.1 <- read_excel("ECOTOX_output\\AquaticReport.1.xlsx", 1)
+aq.2 <- read_excel("ECOTOX_output\\AquaticReport.2.xlsx", 1)
+aq.3 <- read_excel("ECOTOX_output\\AquaticReport.3.xlsx", 1)
+aq.4 <- read_excel("ECOTOX_output\\AquaticReport.4.xlsx", 1)
+aq.5 <- read_excel("ECOTOX_output\\AquaticReport.5.xlsx", 1)
+aq.6 <- read_excel("ECOTOX_output\\AquaticReport.6.xlsx", 1)
+aq.7 <- read_excel("ECOTOX_output\\AquaticReport.7.xlsx", 1)
+aq.8 <- read_excel("ECOTOX_output\\AquaticReport.8.xlsx", 1)
+aq.9 <- read_excel("ECOTOX_output\\AquaticReport.9.xlsx", 1)
+aq.10 <- read_excel("ECOTOX_output\\AquaticReport.10.xlsx", 1)
+aq.11 <- read_excel("ECOTOX_output\\AquaticReport.11.xlsx", 1)
+aq.12 <- read_excel("ECOTOX_output\\AquaticReport.12.xlsx", 1)
+aq.13 <- read_excel("ECOTOX_output\\AquaticReport.13.xlsx", 1)
+aq.14 <- read_excel("ECOTOX_output\\AquaticReport.14.xlsx", 1)
+aq.15 <- read_excel("ECOTOX_output\\AquaticReport.15.xlsx", 1)
+aq.16 <- read_excel("ECOTOX_output\\AquaticReport.16.xlsx", 1)
+aq.17 <- read_excel("ECOTOX_output\\AquaticReport.17.xlsx", 1)
+
+tq.raw <- rbind(aq.1, aq.2, aq.3, aq.4, aq.5, aq.6, aq.7, aq.8, aq.9, aq.10, aq.11, aq.12, aq.13, aq.14)
+aq.15$`Test Number` <- as.character(aq.15$`Test Number`)
+aq.16$`Test Number` <- as.character(aq.16$`Test Number`)
+
+aq.15$`Result Number` <- as.character(aq.15$`Result Number`)
+aq.16$`Result Number` <- as.character(aq.16$`Result Number`)
+tq.raw_1 <- rbind(tq.raw, aq.15, aq.16)
+
+tq.raw_1 <- tq.raw_1 %>% mutate(across(everything(), as.character))
+
+aq.17.1 <- aq.17 %>% mutate(across(everything(), as.character))
+
+tq.raw_2 <- bind_rows(tq.raw_1, aq.17.1)
+View(tq.raw_2)
+
+#v1
+tq.v1 <- tq.raw_2 %>% select(`CAS Number`, `Chemical Name`, `Chemical Analysis`, `Test Method`, `Species Scientific Name`, `Species Common Name`, `Species Kingdom`, `Species Phylum`, `Species Sub Phylum`,
+                           `Species Group`, `Organism Lifestage`, `Exposure Type`, `Media Type`, `Test Location`, `Conc 1 Mean Op (Standardized)`, `Conc 1 Type (Standardized)`, `Conc 1 Mean (Standardized)`, `Conc Min 1 (Standardized)`, `Conc 1 Max (Standardized)`, `Conc 1 Units (Standardized)`, Effect, `Effect Measurement`, `Endpoint`, `Statistical Significance`, `Significance Level Mean`,
+                           `Observed Duration Mean (Days)`, `Observed Duration Mean Op (Days)`, `Study Duration Mean (Days)`,  `Study Duration Mean Op (Days)`, `Reference Number`, `Title`)
+
+#measured benchmarks####
+tq.v2 <- tq.v1 %>% filter(`Conc 1 Units (Standardized)` %in% c("AI mg/L", "mg/L"),!`Conc 1 Mean Op (Standardized)` %in% c("~", ">", ">=", "<", "<="), `Conc 1 Type (Standardized)` == "Active ingredient", !`Observed Duration Mean Op (Days)` %in% c("<=", "<", "~", ">", ">="), `Media Type` == "Fresh water", 
+                          `Chemical Analysis` %in% c("Measured", "Active ingredient", "Chemical analysis reported", "Not coded"), !`Endpoint` %in% c("ATCN", "BCF", "BAF", "BCF-D", "ET50", "LT50","LT90", "LT50/", "NR"), `Effect` != "Accumulation", `Exposure Type` %in% c("Aquatic - not reported", "Environmental - unspecified", "Flow-through", "Lentic", "Lotic", "Not Reported", "NR", "Pulse", "Renewal", "Static"), `Statistical Significance` != "Not significant at all concentrations", `CAS Number` !="147240")
+
+View(tq.v2)
+
+#average min and max concentrations to get mean and replace "NR" in mean reported concentration with calculated mean
+tq.v3 <- tq.v2
+tq.v3$`Conc Min 1 (Standardized)` <- as.numeric(tq.v3$`Conc Min 1 (Standardized)`)
+tq.v3$`Conc 1 Max (Standardized)` <- as.numeric(tq.v3$`Conc 1 Max (Standardized)`)
+tq.v3$mean.conc <- (((tq.v3$`Conc Min 1 (Standardized)`) + (tq.v3$`Conc 1 Max (Standardized)`)) * (0.5))
+tq.v3 <- tq.v3 %>% relocate(mean.conc, .after = `Conc 1 Mean (Standardized)`) 
+
+tq.v3$concentration <- tq.v3$`Conc 1 Mean (Standardized)`
+tq.v3$concentration <- ifelse(tq.v3$concentration == "NR", tq.v3$mean.conc, tq.v3$concentration)
+tq.v3 <- tq.v3 %>% relocate(concentration, .after = `Conc 1 Mean (Standardized)`) %>% select(-`Conc 1 Mean (Standardized)`, -mean.conc,)
+
+milwaukee <- tq.v3
+milwaukee$concentration <- as.numeric(milwaukee$concentration)
+milwaukee$concentration <- milwaukee$concentration * (10^3)
+milwaukee <- milwaukee %>% rename(spp.group = `Species Group`)
+View(milwaukee)
+
+#add species groups: "FISH", "INVERTS", "PLANTS"
+
+#FISH
+
+milwaukee$spp.group <- gsub("Fish; Standard Test Species", "Fish", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Fish; U.S. Invasive Species", "Fish", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Fish; U.S. Threatened and Endangered Species", "Fish", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Fish; Standard Test Species|Fish", "Fish", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Fish; Standard Test Species; U.S. Threatened and Endangered Species; U.S. Invasive Species", "Fish", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Fish; Standard Test Species; U.S. Invasive Species", "Fish", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Fish; U.S. Threatened and Endangered Species", "Fish", milwaukee$spp.group)
+
+#define AMPHIBIANS as FISH 
+
+milwaukee$spp.group <- gsub("Amphibians", "Fish", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Amphibians; Standard Test Species", "Fish", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Amphibians; Standard Test Species; U.S. Invasive Species", "Fish", milwaukee$spp.group) 
+milwaukee$spp.group <- gsub("Amphibians; U.S. Invasive Species", "Fish", milwaukee$spp.group)
+
+#Plants
+milwaukee$spp.group <- gsub("Algae", "Plant", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Plant; U.S. Invasive Species", "Plant", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Plant; Standard Test Species", "Plant", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Algae; Standard Test Species", "Plant", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Flowers, Trees, Shrubs, Ferns; Standard Test Species", "Plant", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Flowers, Trees, Shrubs, Ferns", "Plant", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Flowers, Trees, Shrubs, Ferns; U.S. Invasive Species", "Plant", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Flowers, Trees, Shrubs, Ferns; Standard Test Species; U.S. Invasive Species", "Plant", milwaukee$spp.group)
+
+#Invertebrates
+milwaukee$spp.group <- gsub("Crustaceans; Standard Test Species", "Invertebrates", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Crustaceans", "Invertebrates", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Insects/Spiders; Standard Test Species", "Invertebrates", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Insects/Spiders", "Invertebrates", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Invertebrates; Standard Test Species", "Invertebrates", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Invertebrates; U.S. Invasive Species", "Invertebrates", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Invertebrate; Standard Test Species; U.S. Invasive Species", "Invertebrates", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Invertebrate; Standard Test Species", "Invertebrates", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Invertebrate; U.S. Invasive Species", "Invertebrates", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Molluscs", "Invertebrates", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Molluscs; Standard Test Species; U.S. Invasive Species", "Invertebrates", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Molluscs; Standard Test Species", "Invertebrates", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Molluscs; U.S. Invasive Species", "Invertebrates", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Worms", "Invertebrates", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("Worms; Standard Test Species", "Invertebrates", milwaukee$spp.group)
+milwaukee$spp.group <- gsub("mil", "Invertebrates", milwaukee$spp.group)
+
+milwaukee$spp.group <- gsub("Invertebrates", "Invertebrate", milwaukee$spp.group)
+
+#check spp. definition
+
+milwaukee %>% group_by(spp.group) %>% summarize(UniqeSpecies = length(unique(spp.group))) 
+
+milwaukee <- milwaukee %>% filter(spp.group != "Miscellaneous")
+
+#reformat duration column
+milwaukee$duration <- milwaukee$`Observed Duration Mean (Days)`
+milwaukee$duration <- ifelse(milwaukee$duration == "NR", milwaukee$`Study Duration Mean (Days)`, milwaukee$duration)
+
+milwaukee <- milwaukee %>% filter(duration != "NR")
+milwaukee$duration <- as.numeric(milwaukee$duration)
+milwaukee <- milwaukee %>% select(-`Observed Duration Mean (Days)`, -`Study Duration Mean (Days)`)
+milwaukee <- milwaukee %>% select(-`Observed Duration Mean Op (Days)`, -`Study Duration Mean Op (Days)`)
+
+#add qualifier column based on duration (study length < 7 d is assumed to be acute, study length = > 7 d = chronic)
+
+milwaukee$studytype <- ifelse(milwaukee$duration < 7, "acute", "chronic")
+
+#change column order to improve flow & remove excess columns 
+milwaukee <- milwaukee %>% relocate(duration, .after = `Test Location`) %>% relocate(studytype, .after = duration) %>% select(-`Conc 1 Mean Op (Standardized)`, -`Conc 1 Type (Standardized)`)
+View(milwaukee)
+
+#subset effect types 
+noeffect <- milwaukee %>% filter(Endpoint %in% c("NOEC", "NOEL", "EC10", "LC10", "NR-ZERO", "NOEC/", "EC01", "IC10", "LC01", "EC05"))
+loweffect <- milwaukee %>% filter(Endpoint %in% c("EC16", "LOEC", "MATC", "LOEL", "LOEC/", "IC25", "IC40", "EC20", "EC25", "LC25"))
+effect <- milwaukee %>% filter(Endpoint %in% c("EC50", "LC50", "LC50/", "NR-LETH", "EC90", "LC90", "NR-LETH/", "IC50", "EC80", "IC50/", "EC50/", "EC50*", "LD50"))
+
+#add effect columns
+noeffect$effect.cat <- "no.effect"
+loweffect$effect.cat <- "low.effect"
+effect$effect.cat <- "effect"
+
+#rbind 
+milwaukee <- rbind(noeffect, loweffect, effect)
+
+#subset into groups based on endpoint 
+
+milwaukee.reg <- milwaukee %>% filter(Effect %in% c("Reproduction", "Growth", "Mortality", "Development", "Population", "Behavior", "Intoxication"))
+View(milwaukee.reg)
+write_xlsx(milwaukee.reg, "Tier1data.xlsx")
+
+milwaukee.altflag <- milwaukee %>% filter(!Effect %in% c("Reproduction", "Growth", "Mortality", "Development", "Population", "Behavior", "Intoxication"))
+View(milwaukee.altflag)
+
+#look at data - identify potential lower outliers
+#T1#
+names(milwaukee.reg)
+tier1.box <- boxplot(milwaukee.reg$concentration ~ milwaukee.reg$`CAS Number`)
+tier1.box$out
+
+tier1.outliers <- subset(milwaukee.reg, milwaukee.reg$concentration %in% tier1.box$out)
+View(tier1.outliers)
+
+tier1.box.info <- milwaukee.reg %>% group_by(`CAS Number`) %>% summarise(Q1 = quantile(concentration, 0.25), Q3 = quantile(concentration, 0.75))
+
+tier1.outliers1 <- left_join(tier1.outliers, tier1.box.info)
+View(tier1.outliers1)
+
+tier1.outliers1$OUTLIER.CLASS <- ifelse(tier1.outliers1$concentration < tier1.outliers1$Q1, "POTENTIAL LOWER OUTLIER", "POTENTIAL UPPER OUTLIER")
+
+tier1.outliers2 <- tier1.outliers1 %>% filter(OUTLIER.CLASS == "POTENTIAL LOWER OUTLIER")
+View(tier1.outliers2)
+
+write_xlsx(tier1.outliers2, "CEC.TIER1.POUTLIERS_12_04_2021.xlsx")
+
+#T2#
+tier2.box <- boxplot(milwaukee.altflag$concentration ~ milwaukee.altflag$`CAS Number`)
+tier2.box$out
+
+tier2.outliers <- subset(milwaukee.altflag, milwaukee.altflag$concentration %in% tier2.box$out)
+
+tier2.box.info <- milwaukee.altflag %>% group_by(`CAS Number`) %>% summarise(Q1 = quantile(concentration, 0.25), Q3 = quantile(concentration, 0.75))
+
+tier2.outliers1 <- left_join(tier2.outliers, tier2.box.info)
+
+tier2.outliers1$OUTLIER.CLASS <- ifelse(tier2.outliers1$concentration < tier2.outliers1$Q1, "POTENTIAL LOWER OUTLIER", "POTENTIAL UPPER OUTLIER")
+
+tier2.outliers2 <- tier2.outliers1 %>% filter(OUTLIER.CLASS == "POTENTIAL LOWER OUTLIER")
+
+write_xlsx(tier2.outliers2, "CEC.TIER2.POUTLIERS_12_04_2021.xlsx")
+
+#identify chemicals with limited numbers of T1 & T2 data as outliers
+#T1
+
+milwaukee.reg.sum <- milwaukee.reg %>% group_by(`CAS Number`) %>% summarize(nec = length(`CAS Number`))
+View(milwaukee.reg.sum)
+
+milwaukee.reg.min.out <- left_join(milwaukee.reg, milwaukee.reg.sum)
+
+milwaukee.reg.min.out$Outlier.Class <- ifelse(milwaukee.reg.min.out$nec < 5, "Potential lower outlier", "")
+milwaukee.reg.min.out_1 <- milwaukee.reg.min.out %>% filter(Outlier.Class == "Potential lower outlier")
+
+write_xlsx(milwaukee.reg.min.out_1, "milwaukee.reg.min.out_1.xlsx")
+
+#T2
+milwaukee.alt.sum <- milwaukee.altflag %>% group_by(`CAS Number`) %>% summarize(nec = length(`CAS Number`))
+
+milwaukee.alt.min.out <- left_join(milwaukee.altflag, milwaukee.alt.sum)
+
+milwaukee.alt.min.out$Outlier.Class <- ifelse(milwaukee.alt.min.out$nec < 5, "Potential lower outlier", "")
+milwaukee.alt.min.out_1 <- milwaukee.alt.min.out %>% filter(Outlier.Class == "Potential lower outlier")
+
+write_xlsx(milwaukee.alt.min.out_1, "milwaukee.alt.min.out_1.xlsx")
+
+#remove outliers
+
+#milwaukee reg
+mil.reg.out <- read_excel("Tier_1_outliers.xlsx") %>%
+  filter(Action == "Exclude") %>% select(-c("Full Article Accessible?":"Action"))
+names(mil.reg.out)
+
+milwaukee_t1 <- anti_join(milwaukee.reg,mil.reg.out)
+milwaukee_t1$benchmark.group <- "Tier1_measured"
+
+#milwaukee.altflag
+mil.alt.out <- read_excel("tier_2_outliers.xlsx") %>%
+  filter(Action == "Exclude") %>% select(-c("Full Article Accessible?":"Action"))
+
+milwaukee_t2 <- anti_join(milwaukee.altflag, mil.alt.out)
+milwaukee_t2$benchmark.group <- "Tier2_measured"
+
+milwaukee_measured <- bind_rows(milwaukee_t1, milwaukee_t2)
+View(milwaukee_measured)
+
+##develop milwaukee dataset into subsets
+
+noef.sum <- milwaukee_measured %>% filter(effect.cat == "no.effect") %>%
+  group_by(`CAS Number`, `Chemical Name`, spp.group, benchmark.group, studytype) %>%
+  summarize(minconc = min(concentration), uniquespecies = length(unique(`Species Scientific Name`)), totalresults = length(`CAS Number`)) %>%
+  spread(spp.group, uniquespecies) %>% group_by(`CAS Number`, `Chemical Name`, benchmark.group, studytype) %>% 
+  summarize(minconc = min(minconc), uFish = sum(Fish, na.rm = T), uInvert = sum(Invertebrate, na.rm = T), uPlant = sum(Plant, na.rm = T))
+
+noef.sum$EFtype <- "NoEffect"
+
+loef.sum <- milwaukee_measured %>% filter(effect.cat == "low.effect") %>%
+  group_by(`CAS Number`, `Chemical Name`, spp.group, benchmark.group, studytype) %>%
+  summarize(minconc = min(concentration), uniquespecies = length(unique(`Species Scientific Name`)), totalresults = length(`CAS Number`)) %>%
+  spread(spp.group, uniquespecies) %>% group_by(`CAS Number`, `Chemical Name`, benchmark.group, studytype) %>% 
+  summarize(minconc = min(minconc), uFish = sum(Fish, na.rm = T), uInvert = sum(Invertebrate, na.rm = T), uPlant = sum(Plant, na.rm = T))
+
+loef.sum$EFtype <- "LowEffect"
+
+ef.sum <- milwaukee_measured %>% filter(effect.cat == "effect") %>%
+  group_by(`CAS Number`, `Chemical Name`, spp.group, benchmark.group, studytype) %>%
+  summarize(minconc = min(concentration), uniquespecies = length(unique(`Species Scientific Name`)), totalresults = length(`CAS Number`)) %>%
+  spread(spp.group, uniquespecies) %>% group_by(`CAS Number`, `Chemical Name`, benchmark.group, studytype) %>% 
+  summarize(minconc = min(minconc), uFish = sum(Fish, na.rm = T), uInvert = sum(Invertebrate, na.rm = T), uPlant = sum(Plant, na.rm = T))
+
+ef.sum$EFtype <- "Effect"
+
+#bind
+milwaukee.v2 <- rbind(noef.sum, loef.sum, ef.sum)
+milwaukee.v2$`CAS Number` <- as.factor(milwaukee.v2$`CAS Number`)
+View(milwaukee.v2)
+
+#nominal benchmarks####
+tq.nom <- tq.v1 %>% filter(`Conc 1 Units (Standardized)` %in% c("AI mg/L", "mg/L"),!`Conc 1 Mean Op (Standardized)` %in% c("~", ">", ">=", "<", "<="), `Conc 1 Type (Standardized)` == "Active ingredient", !`Observed Duration Mean Op (Days)` %in% c("<=", "<", "~", ">", ">="), `Media Type` == "Fresh water", 
+                          !`Chemical Analysis` %in% c("Measured", "Active ingredient", "Chemical analysis reported", "Not coded"), !`Endpoint` %in% c("ATCN", "BCF", "BAF", "BCF-D", "ET50", "LT50","LT90", "LT50/", "NR"), `Effect` != "Accumulation", `Exposure Type` %in% c("Aquatic - not reported", "Environmental - unspecified", "Flow-through", "Lentic", "Lotic", "Not Reported", "NR", "Pulse", "Renewal", "Static"), `Statistical Significance` != "Not significant at all concentrations", `CAS Number` !="147240")
+
+View(tq.v2)
+
+#average min and max concentrations to get mean and replace "NR" in mean reported concentration with calculated mean
+tq.nom1 <- tq.nom
+tq.nom1$`Conc Min 1 (Standardized)` <- as.numeric(tq.nom1$`Conc Min 1 (Standardized)`)
+tq.nom1$`Conc 1 Max (Standardized)` <- as.numeric(tq.nom1$`Conc 1 Max (Standardized)`)
+tq.nom1$mean.conc <- (((tq.nom1$`Conc Min 1 (Standardized)`) + (tq.nom1$`Conc 1 Max (Standardized)`)) * (0.5))
+tq.nom1 <- tq.nom1 %>% relocate(mean.conc, .after = `Conc 1 Mean (Standardized)`) 
+
+tq.nom1$concentration <- tq.nom1$`Conc 1 Mean (Standardized)`
+tq.nom1$concentration <- ifelse(tq.nom1$concentration == "NR", tq.nom1$mean.conc, tq.nom1$concentration)
+tq.nom1 <- tq.nom1 %>% relocate(concentration, .after = `Conc 1 Mean (Standardized)`) %>% select(-`Conc 1 Mean (Standardized)`, -mean.conc,)
+
+tq.nom2 <- tq.nom1
+tq.nom2$concentration <- as.numeric(tq.nom2$concentration)
+tq.nom2$concentration <- tq.nom2$concentration * (10^3)
+tq.nom2 <- tq.nom2 %>% rename(spp.group = `Species Group`)
+View(tq.nom2)
+
+#add species groups: "FISH", "INVERTS", "PLANTS"
+
+#FISH
+tq.nom2$spp.group <- gsub("Fish; Standard Test Species", "Fish", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Fish; U.S. Invasive Species", "Fish", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Fish; U.S. Threatened and Endangered Species", "Fish", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Fish; Standard Test Species|Fish", "Fish", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Fish; Standard Test Species; U.S. Threatened and Endangered Species; U.S. Invasive Species", "Fish", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Fish; Standard Test Species; U.S. Invasive Species", "Fish", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Fish; U.S. Threatened and Endangered Species", "Fish", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Fish; Standard Test Species ", "Fish", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Fish; Standard Test Species; U.S. Invasive Species", "Fish", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Fish; U.S. Invasive Species", "Fish", tq.nom2$spp.group)
+
+#define AMPHIBIANS as FISH 
+
+tq.nom2$spp.group <- gsub("Amphibians", "Fish", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Amphibians; Standard Test Species", "Fish", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Amphibians; Standard Test Species; U.S. Invasive Species", "Fish", tq.nom2$spp.group) 
+tq.nom2$spp.group <- gsub("Amphibians; U.S. Invasive Species", "Fish", tq.nom2$spp.group)
+
+#Plants
+tq.nom2$spp.group <- gsub("Algae", "Plant", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Plant; U.S. Invasive Species", "Plant", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Plant; Standard Test Species", "Plant", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Algae; Standard Test Species", "Plant", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Flowers, Trees, Shrubs, Ferns; Standard Test Species", "Plant", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Flowers, Trees, Shrubs, Ferns", "Plant", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Flowers, Trees, Shrubs, Ferns; U.S. Invasive Species", "Plant", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Flowers, Trees, Shrubs, Ferns; Standard Test Species; U.S. Invasive Species", "Plant", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Plant; U.S. Invasive Species", "Plant", tq.nom2$spp.group)
+
+
+#Invertebrates
+tq.nom2$spp.group <- gsub("Crustaceans; Standard Test Species", "Invertebrates", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Crustaceans", "Invertebrates", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Insects/Spiders; Standard Test Species", "Invertebrates", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Insects/Spiders", "Invertebrates", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Invertebrates; Standard Test Species", "Invertebrates", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Invertebrates; U.S. Invasive Species", "Invertebrates", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Invertebrate; Standard Test Species; U.S. Invasive Species", "Invertebrates", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Invertebrate; Standard Test Species", "Invertebrates", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Invertebrate; U.S. Invasive Species", "Invertebrates", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Molluscs", "Invertebrates", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Molluscs; Standard Test Species; U.S. Invasive Species", "Invertebrates", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Molluscs; Standard Test Species", "Invertebrates", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Molluscs; U.S. Invasive Species", "Invertebrates", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Worms", "Invertebrates", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Worms; Standard Test Species", "Invertebrates", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("mil", "Invertebrates", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Invertebrate; Standard Test Species", "Invertebrates", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Invertebrate; Standard Test Species; U.S. Invasive Species", "Invertebrates", tq.nom2$spp.group)
+tq.nom2$spp.group <- gsub("Invertebrate; U.S. Invasive Species", "Invertebrates", tq.nom2$spp.group)
+
+tq.nom2$spp.group <- gsub("Invertebrates", "Invertebrate", tq.nom2$spp.group)
+
+#check spp. definition
+
+list(unique(tq.nom2$spp.group))
+
+tq.nom3 <- tq.nom2 %>% filter(!spp.group %in% c("Fungi", "Miscellaneous"))
+
+#reformat duration column
+tq.nom3$duration <- tq.nom3$`Observed Duration Mean (Days)`
+tq.nom3$duration <- ifelse(tq.nom3$duration == "NR", tq.nom3$`Study Duration Mean (Days)`, tq.nom3$duration)
+
+tq.nom4 <- tq.nom3 %>% filter(duration != "NR")
+tq.nom4$duration <- as.numeric(tq.nom4$duration)
+tq.nom4 <- tq.nom4 %>% select(-`Observed Duration Mean (Days)`, -`Study Duration Mean (Days)`)
+tq.nom4 <- tq.nom4 %>% select(-`Observed Duration Mean Op (Days)`, -`Study Duration Mean Op (Days)`)
+
+#add qualifier column based on duration (study length < 7 d is assumed to be acute, study length = > 7 d = chronic)
+
+tq.nom4$studytype <- ifelse(tq.nom4$duration < 7, "acute", "chronic")
+
+#change column order to improve flow & remove excess columns 
+tq.nom5 <- tq.nom4 %>% relocate(duration, .after = `Test Location`) %>% relocate(studytype, .after = duration) %>% select(-`Conc 1 Mean Op (Standardized)`, -`Conc 1 Type (Standardized)`)
+
+#subset effect types 
+noeffect_nom <- tq.nom5 %>% filter(Endpoint %in% c("NOEC", "NOEL", "EC10", "LC10", "NR-ZERO", "NOEC/", "EC01", "IC10", "LC01", "EC05"))
+loweffect_nom <- tq.nom5 %>% filter(Endpoint %in% c("EC16", "LOEC", "MATC", "LOEL", "LOEC/", "IC25", "IC40", "EC20", "EC25", "LC25"))
+effect_nom <- tq.nom5 %>% filter(Endpoint %in% c("EC50", "LC50", "LC50/", "NR-LETH", "EC90", "LC90", "NR-LETH/", "IC50", "EC80", "IC50/", "EC50/", "EC50*", "LD50"))
+
+#add effect columns
+noeffect_nom$effect.cat <- "no.effect"
+loweffect_nom$effect.cat <- "low.effect"
+effect_nom$effect.cat <- "effect"
+
+#rbind 
+tq.nom6 <- rbind(noeffect_nom, loweffect_nom, effect_nom)
+
+#subset into groups based on endpoint 
+
+tq.nom_t1 <- tq.nom6 %>% filter(Effect %in% c("Reproduction", "Growth", "Mortality", "Development", "Population", "Behavior", "Intoxication"))
+tq.nom_t2 <- tq.nom6 %>% filter(!Effect %in% c("Reproduction", "Growth", "Mortality", "Development", "Population", "Behavior", "Intoxication"))
+
+#look at data - identify potential lower outliers
+#T1#
+tq.nom_t1_box <- boxplot(tq.nom_t1$concentration ~ tq.nom_t1$`CAS Number`)
+tq.nom_t1_box$out
+
+tq.nom_t1_outliers <- subset(tq.nom_t1, tq.nom_t1$concentration %in% tq.nom_t1_box$out)
+
+tq.nom_t1_box_info <- tq.nom_t1 %>% group_by(`CAS Number`) %>% summarise(Q1 = quantile(concentration, 0.25), Q3 = quantile(concentration, 0.75))
+
+tq.nom_t1_outliers1 <- left_join(tq.nom_t1_outliers, tq.nom_t1_box_info)
+
+tq.nom_t1_outliers1$OUTLIER.CLASS <- ifelse(tq.nom_t1_outliers1$concentration < tq.nom_t1_outliers1$Q1, "POTENTIAL LOWER OUTLIER", "POTENTIAL UPPER OUTLIER")
+
+tq.nom_t1_outliers2 <- tq.nom_t1_outliers1 %>% filter(OUTLIER.CLASS == "POTENTIAL LOWER OUTLIER")
+
+write_xlsx(tq.nom_t1_outliers2, "CEC.TIER1.NOM.POUTLIERS.xlsx")
+
+#T2#
+tq.nom_t2.box <- boxplot(tq.nom_t2$concentration ~ tq.nom_t2$`CAS Number`)
+tq.nom_t2.box$out
+
+tq.nom_t2.outliers <- subset(tq.nom_t2, tq.nom_t2$concentration %in% tq.nom_t2.box$out)
+
+tq.nom_t2.box.info <- tq.nom_t2 %>% group_by(`CAS Number`) %>% summarise(Q1 = quantile(concentration, 0.25), Q3 = quantile(concentration, 0.75))
+
+tq.nom_t2.outliers1 <- left_join(tq.nom_t2.outliers, tq.nom_t2.box.info)
+
+tq.nom_t2.outliers1$OUTLIER.CLASS <- ifelse(tq.nom_t2.outliers1$concentration < tq.nom_t2.outliers1$Q1, "POTENTIAL LOWER OUTLIER", "POTENTIAL UPPER OUTLIER")
+
+tq.nom_t2.outliers2 <- tq.nom_t2.outliers1 %>% filter(OUTLIER.CLASS == "POTENTIAL LOWER OUTLIER")
+
+write_xlsx(tq.nom_t2.outliers2, "CEC.TIER2.NOM.POUTLIERS.xlsx")
+
+#identify chemicals with limited numbers of T1 & T2 data as outliers
+#T1
+
+tq.nom_t1.sum <- tq.nom_t1 %>% group_by(`CAS Number`) %>% summarize(nec = length(`CAS Number`))
+tq.nom_t1.min.out <- left_join(tq.nom_t1, tq.nom_t1.sum)
+
+tq.nom_t1.min.out$Outlier.Class <- ifelse(tq.nom_t1.min.out$nec < 5, "Potential lower outlier", "")
+tq.nom_t1.min.out_1 <- tq.nom_t1.min.out %>% filter(Outlier.Class == "Potential lower outlier")
+
+write_xlsx(tq.nom_t1.min.out_1, "tq.nom_t1.min.out_1.xlsx")
+
+#T2
+tq.nom_t2.sum <- tq.nom_t2 %>% group_by(`CAS Number`) %>% summarize(nec = length(`CAS Number`))
+
+tq.nom_t2.min.out <- left_join(tq.nom_t2, tq.nom_t2.sum)
+
+tq.nom_t2.min.out$Outlier.Class <- ifelse(tq.nom_t2.min.out$nec < 5, "Potential lower outlier", "")
+tq.nom_t2.min.out_1 <- tq.nom_t2.min.out %>% filter(Outlier.Class == "Potential lower outlier")
+
+write_xlsx(tq.nom_t2.min.out_1, "tq.nom_t2.min.out_1.xlsx")
+
+#remove outliers
+#milwaukee reg
+t1_nom_out <- read_excel("Tier1_nominal_outliers.xlsx")%>%
+  filter(Action == "Exclude") %>% select(-c("Full Article Accessible?":"Action"))
+
+t1_nominal <- anti_join(tq.nom_t1, t1_nom_out)
+t1_nominal$benchmark.group <- "Tier1_Nominal"
+
+#milwaukee.altflag
+t2_nom_out <- read_excel("Tier2_nominal_outliers.xlsx")%>%
+  filter(Action == "Exclude") %>% select(-c("Full Article Accessible?":"Action"))
+
+t2_nominal <- anti_join(tq.nom_t2, t2_nom_out)
+
+t2_nominal$benchmark.group <- "Tier2_nominal"
+
+milwaukee.nominal <- bind_rows(t1_nominal, t2_nominal)
+View(milwaukee.nominal)
+
+##develop milwaukee dataset into subsets
+
+noef.sum_nom <- milwaukee.nominal %>% filter(effect.cat == "no.effect") %>%
+  group_by(`CAS Number`, `Chemical Name`, spp.group, benchmark.group, studytype) %>%
+  summarize(minconc = min(concentration), uniquespecies = length(unique(`Species Scientific Name`)), totalresults = length(`CAS Number`)) %>%
+  spread(spp.group, uniquespecies) %>% group_by(`CAS Number`, `Chemical Name`, benchmark.group, studytype) %>% 
+  summarize(minconc = min(minconc), uFish = sum(Fish, na.rm = T), uInvert = sum(Invertebrate, na.rm = T), uPlant = sum(Plant, na.rm = T))
+
+noef.sum_nom$EFtype <- "NoEffect"
+
+loef.sum_nom <- milwaukee.nominal %>% filter(effect.cat == "low.effect") %>%
+  group_by(`CAS Number`, `Chemical Name`, spp.group, benchmark.group, studytype) %>%
+  summarize(minconc = min(concentration), uniquespecies = length(unique(`Species Scientific Name`)), totalresults = length(`CAS Number`)) %>%
+  spread(spp.group, uniquespecies) %>% group_by(`CAS Number`, `Chemical Name`, benchmark.group, studytype) %>% 
+  summarize(minconc = min(minconc), uFish = sum(Fish, na.rm = T), uInvert = sum(Invertebrate, na.rm = T), uPlant = sum(Plant, na.rm = T))
+
+loef.sum_nom$EFtype <- "LowEffect"
+
+ef.sum_nom <- milwaukee.nominal %>% filter(effect.cat == "effect") %>%
+  group_by(`CAS Number`, `Chemical Name`, spp.group, benchmark.group, studytype) %>%
+  summarize(minconc = min(concentration), uniquespecies = length(unique(`Species Scientific Name`)), totalresults = length(`CAS Number`)) %>%
+  spread(spp.group, uniquespecies) %>% group_by(`CAS Number`, `Chemical Name`, benchmark.group, studytype) %>% 
+  summarize(minconc = min(minconc), uFish = sum(Fish, na.rm = T), uInvert = sum(Invertebrate, na.rm = T), uPlant = sum(Plant, na.rm = T))
+
+ef.sum_nom$EFtype <- "Effect"
+
+#bind
+milwaukee.v2_nom <- rbind(noef.sum_nom, loef.sum_nom, ef.sum_nom)
+View(milwaukee.v2_nom)
+
+
+#bind together measured and nominal datasets
+milwaukee_semifinal <- bind_rows(milwaukee.v2, milwaukee.v2_nom)
+View(milwaukee_semifinal)
+
+#identify missing chemicals
+
+Mil_GLRI_chem <- read_xlsx("PBT_data.xlsx") %>% select("CAS", "Chemical")
+Mil_GLRI_chem$`CAS Number` <- gsub("-", "", Mil_GLRI_chem$CAS)
+
+milwaukee_semifinal_1 <- left_join(milwaukee_semifinal, Mil_GLRI_chem, by = "CAS Number") %>% ungroup() %>% select(-c(`CAS Number`, `Chemical Name`)) %>%
+  relocate("CAS", .before = "benchmark.group") %>% relocate("Chemical", .before = "CAS")
+  
+
+View(milwaukee_semifinal_1)
+
+missing.chem <- anti_join(Mil_GLRI_chem, milwaukee_semifinal_1, by = "CAS") %>% select(-`CAS Number`)
+missing.chem$benchmark.group <- "Data Limited"
+View(missing.chem)
+
+##add application factors
+tq <- milwaukee_semifinal_1
+tq$AF.length <- ifelse(tq$studytype == "acute", 5,
+                       ifelse(tq$studytype == "DL", "DL", 
+                              1))
+tq$AF.datarichness <- 1.25
+tq$AF.datarichness <- ifelse((tq$uFish == 0 & tq$uInvert == 0 & tq$uPlant == 0), 5, 
+                             (ifelse((tq$uFish > 0 & tq$uInvert == 0 & tq$uPlant >= 0), 3.75, 
+                                     (ifelse((tq$uFish == 0 & tq$uInvert >= 0 & tq$uPlant > 0), 3.75, 
+                                             (ifelse((tq$uFish >= 0 & tq$uInvert > 0 & tq$uPlant == 0), 3.75, 
+                                                     (ifelse((tq$uFish == 1 & tq$uInvert == 1 & tq$uPlant == 1), 2.5,
+                                                             (ifelse((tq$uFish >= 3 & tq$uInvert >= 3 & tq$uPlant >= 3), 1,
+                                                                     ifelse(tq$uFish == "DL", "DL", tq$AF.datarichness))))))))))))
+tq$AF.endpoint <- ifelse(tq$EFtype == "NoEffect", 1, 
+                         (ifelse(tq$EFtype == "LowEffect", 5,
+                                 ifelse(tq$EFtype == "DL", "DL", 10))))
+
+tq$AF.datarichness <- as.numeric(tq$AF.datarichness)
+tq$AF.length <- as.numeric(tq$AF.length)
+tq$AF.endpoint <- as.numeric(tq$AF.endpoint)
+
+tq$AF.sum <- (tq$AF.datarichness * tq$AF.endpoint * tq$AF.length)
+
+summary(tq$AF.sum)
+View(tq)
+
+#pull benchmarks from tier1 measured, tier1 nominal, tier2 measured, and then tier2 nominal
+t1_measured <- tq %>% filter(benchmark.group == "Tier1_measured")
+t1_nominal <- tq %>% filter(benchmark.group == "Tier1_Nominal")
+t2_measured <- tq %>% filter(benchmark.group == "Tier2_measured")
+t2_nominal <- tq %>% filter(benchmark.group == "Tier2_nominal")
+View(t1_measured)
+
+t1_measured_missing <- anti_join(t1_nominal, t1_measured, by = "CAS")
+View(t1_measured_missing)
+
+t1_total <- bind_rows(t1_measured, t1_measured_missing)
+
+t1_missing <- anti_join(t2_measured, t1_total, by = "CAS")
+View(t1_missing)
+
+t1_2_measured <- bind_rows(t1_total, t1_missing)
+
+t1_2_measured_missing <- anti_join(t2_nominal, t1_2_measured, by = "CAS")
+View(t1_2_measured_missing)
+
+milwaukee_almost_there <- bind_rows(t1_2_measured, t1_2_measured_missing) 
+View(milwaukee_almost_there)
+milwaukee_almost_there$minconc <- as.numeric(milwaukee_almost_there$minconc)
+
+#calculate final AF
+milwaukee_almost_there$benchmark <- (milwaukee_almost_there$minconc/milwaukee_almost_there$AF.sum)
+milwaukee_prefinal <- milwaukee_almost_there %>% group_by(Chemical, CAS) %>% summarize(minEC = min(minconc))
+
+milwaukee_final <- milwaukee_almost_there %>% group_by(Chemical, CAS) %>% summarize(af.benchmark = min(benchmark))
+View(milwaukee_final)
+
+milwaukee_finale <- left_join(milwaukee_almost_there, milwaukee_prefinal, by = c("Chemical", "CAS")) 
+milwaukee_finale2 <- left_join(milwaukee_finale, milwaukee_final, by = c("Chemical", "CAS"))
+
+#bind rows for dataset together
+
+milwaukee_finale1 <- bind_rows(milwaukee_finale2, missing.chem) %>% replace_na(list(studytype = "DL", minconc = "DL", uFish = "DL",
+                                                                                    uInvert = "DL", uPlant = "DL", EFtype = "DL", AF.length = "DL", AF.datarichness = "DL", 
+                                                                                    AF.endpoint = "DL", AF.sum = "DL", benchmark = "DL", af.benchmark = "DL", minEC = "DL")) %>% filter(benchmark == af.benchmark)
+  
+View(milwaukee_finale1)
+
+write_xlsx(milwaukee_finale1, "milwaukee_finale.xlsx")
+
+#compare to chemical concentrations#
+milwaukee_finale1 <- read_excel("milwaukee_finale_EM_annotated.xlsx")
+
+##load in Milwaukee Data ###
+chem.2017 <- read_excel("Chemistry Compiled_Final.xlsx", "2017")%>%
+  filter(Detect == "Yes", Media == "Water", !Site %in% c("MED", "UWM", "MIM-BK")) %>% select("CAS", "Chemical", "Site", "detect.con.ppb", "RL.ppb", "Detect.code")
+chem.2017$Detect.code <- ifelse(is.na(chem.2017$Detect.code), "detect", chem.2017$Detect.code)
+chem.2017$Concentration <- ifelse(chem.2017$Detect.code == "M", chem.2017$RL.ppb / 4, chem.2017$detect.con.ppb)
+chem.2017_1 <- chem.2017 %>% select(-c(detect.con.ppb, Detect.code, RL.ppb))
+chem.2017_1$Year <- "2017"
+chem.2017_1$Site_Year <- paste(chem.2017_1$Site, chem.2017_1$Year, sep = "_")
+
+chem.2018 <- read_excel("Chemistry Compiled_Final.xlsx", "2018") %>%
+  filter(Detect == "Yes", Media == "Water", !Site %in% c("MED", "UWM")) %>% select("CAS", "Chemical", "Site", "detect.con.ppb","RL.ppb", "Detect.code")
+chem.2018$Detect.code <- ifelse(is.na(chem.2018$Detect.code), "detect", chem.2018$Detect.code)
+chem.2018$Concentration <- ifelse(chem.2018$Detect.code == "M", chem.2018$RL.ppb / 4, chem.2018$detect.con.ppb)
+chem.2018_1 <- chem.2018 %>% select(-c(detect.con.ppb, Detect.code, RL.ppb))
+chem.2018_1$Year <- "2018"
+chem.2018_1$Site_Year <- paste(chem.2018_1$Site, chem.2018_1$Year, sep = "_")
+
+milwaukee.chem <- rbind(chem.2017_1, chem.2018_1) %>% select(-Year)
+milwaukee.chem$CAS <- as.factor(milwaukee.chem$CAS)
+
+milwaukee_finale_forcomp <- milwaukee_finale1 %>% ungroup() %>% select("CAS", "minEC", "af.benchmark", "benchmark.group")
+
+milwaukee_comp <- left_join(milwaukee.chem, milwaukee_finale_forcomp, by = c("CAS")) %>% 
+  rename("Detection [ ] (ug/L)" = Concentration) %>% rename("Benchmark" = minEC, "Benchmark/AF" = af.benchmark)
+View(milwaukee_comp)
+
+### graph ECOTOX benchmark vs. measured chemicals distribution
+milwaukee_comp1 <- milwaukee_comp %>% select(-Site_Year) %>% filter(benchmark.group != "Data Limited") %>% gather("Detection [ ] (ug/L)":"Benchmark/AF", key = "Concentration Type", value = "value")
+milwaukee_comp1$value <- as.numeric(milwaukee_comp1$value)
+
+milwaukee_ecotox_plot <- milwaukee_comp1 %>% ggplot(aes(x=value, y=Chemical,  color = `Concentration Type`)) + geom_point(size = 5) + theme_classic() + scale_x_continuous(trans = 'log10')+ theme(text = element_text(size=25)) + theme(axis.title = element_text(size = 35)) + labs(title = "", x= "Concentration (ug/L)")+ scale_colour_viridis_d()
+ggsave("ECOTOX_plot.jpeg", height = 25, width = 20)
+
+#create prioritization output
+View(milwaukee_comp)
+milwaukee_comp$`Detection [ ] (ug/L)` <- as.numeric(milwaukee_comp$`Detection [ ] (ug/L)`)
+milwaukee_comp$Benchmark <- as.numeric(milwaukee_comp$Benchmark)
+milwaukee_comp$TQ_BM <- milwaukee_comp$`Detection [ ] (ug/L)` / milwaukee_comp$Benchmark
+milwaukee_comp$`Benchmark/AF` <- as.numeric(milwaukee_comp$`Benchmark/AF`)
+milwaukee_comp$TQ_BMAF <- milwaukee_comp$`Detection [ ] (ug/L)` / milwaukee_comp$`Benchmark/AF`
+
+milwaukee_comp_BM_exceed <- milwaukee_comp %>% filter(TQ_BM >= 1)
+milwaukee_comp_BMAF_exceed <- milwaukee_comp %>% filter(TQ_BMAF >= 1)
+milwaukee_comp_BMAF_nonexceed <- milwaukee_comp %>% filter(TQ_BMAF < 1)
+
+names(milwaukee_comp_BM_exceed)
+View(milwaukee_comp_nonexceed)
+milwaukee_comp_BM  <- milwaukee_comp_BM_exceed %>% ungroup() %>% group_by(Chemical, CAS, benchmark.group) %>% summarize(freqexceed_BM = (n_distinct(Site_Year)/19), maxTQ = max(TQ_BM), maxTQ_AF = max(TQ_BMAF))
+milwaukee_comp_BMAF <- milwaukee_comp_BMAF_exceed%>% ungroup() %>% group_by(Chemical, CAS, benchmark.group) %>% summarize(freqexceed_BMAF = (n_distinct(Site_Year)/19), maxTQ_AF = max(TQ_BMAF), maxTQ = max(TQ_BM))
+milwaukee_comp_nonexceed <- milwaukee_comp_BMAF_nonexceed %>% ungroup() %>% group_by(Chemical, CAS, benchmark.group) %>% summarize(maxTQ = max(TQ_BM), maxTQ_AF = max(TQ_BMAF))
+  
+milwaukee_comp_BM$Exceed_BM <- "Yes"
+
+milwaukee_comp_BMAF$Exceed_BMAF <- "Yes"
+milwaukee_comp_nonexceed$Exceed_BM <- "No"
+milwaukee_comp_nonexceed$Exceed_BMAF <- "No"
+
+View(milwaukee_comp_BM)
+View(milwaukee_comp_BMAF)
+
+exceeders <- left_join(milwaukee_comp_BMAF, milwaukee_comp_BM)
+milwaukee_all_chem <- bind_rows(exceeders, milwaukee_comp_nonexceed) %>% replace_na(list(freqexceed_BMAF = 0, freqexceed_BM = 0, Exceed_BM = "No"))
+names(milwaukee_all_chem)
+list(unique(milwaukee_all_chem$benchmark.group))
+
+milwaukee_BM <- milwaukee_all_chem %>% select(Chemical, CAS, benchmark.group, freqexceed_BM, maxTQ, Exceed_BM, Exceed_BMAF)
+milwaukee_BMAF <- milwaukee_all_chem %>% select(Chemical, CAS, benchmark.group, freqexceed_BMAF, maxTQ_AF, Exceed_BM, Exceed_BMAF)
+
+milwaukee_BM$bench_coeff <- ifelse(milwaukee_BM$benchmark.group %in% c("Tier1_measured", "Tier1_Nominal"), 1, 
+                                   0.5)
+milwaukee_BMAF$bench_coeff <- ifelse(milwaukee_BM$benchmark.group %in% c("Tier1_measured", "Tier1_Nominal"), 0.75, 
+                                   0.25)
+
+milwaukee_BM$PSfreq <- ifelse(milwaukee_BM$freqexceed_BM >= 0.5, 10,
+                              ifelse(milwaukee_BM$freqexceed_BM > 0 & milwaukee_BM$freqexceed_BM < 0.5, 5,
+                                     0))
+milwaukee_BMAF$PSfreq <- ifelse(milwaukee_BMAF$freqexceed_BMAF >= 0.5, 10,
+                              ifelse(milwaukee_BMAF$freqexceed_BMAF > 0 & milwaukee_BMAF$freqexceed_BMAF < 0.5, 5,
+                                     0))
+
+milwaukee_BM$PS <- milwaukee_BM$bench_coeff * milwaukee_BM$PSfreq
+milwaukee_BM$Benchmark <- "Benchmark"
+milwaukee_BMAF$PS <- milwaukee_BMAF$bench_coeff * milwaukee_BMAF$PSfreq
+milwaukee_BMAF$Benchmark <- "AF-adjusted Benchmark"
+
+milwaukee_BM_1 <- milwaukee_BM %>% rename("freqexceed" = "freqexceed_BM")
+milwaukee_BMAF_1 <- milwaukee_BMAF %>% rename("freqexceed" = "freqexceed_BMAF", "maxTQ" = "maxTQ_AF")
+
+milwaukee_presquefin <- bind_rows(milwaukee_BM_1, milwaukee_BMAF_1)
+
+milwaukee_unpetitpeuplus <- milwaukee_presquefin %>% group_by(Chemical, CAS) %>% summarize(maxPS = max(PS))
+
+milwaukee_fin <- left_join(milwaukee_presquefin, milwaukee_unpetitpeuplus)
+View(milwaukee_fin)
+
+write_xlsx(milwaukee_fin, "Final_ECOTOX_LoE.xlsx")
