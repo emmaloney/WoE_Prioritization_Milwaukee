@@ -1,0 +1,196 @@
+library(dplyr)
+library(readxl)
+library(writexl)
+library(ComplexHeatmap)
+library(tidyverse)
+library(ggpubr)
+
+#make final prioritization table
+
+detection_freq <- read_excel("SI Tables_Final_15_03_2022.xlsx", "SI Table 8", skip = 2) %>%
+  select(CAS, `Chemical Name`, PSdetectSF, PSdetectTF, PSdetectEC) %>% distinct() %>% rename("Chemical" = "Chemical Name") %>% rename("PSdetect_SF" = "PSdetectSF", "PSdetect_TF" = "PSdetectTF", "PSdetect_EC" = "PSdetectEC")
+efate <- read_excel("SI Tables_Final_15_03_2022.xlsx", "SI Table 9", skip = 2) %>%
+  select(CAS, "Chemical", "PSfate,P", "PSfate,B", "PSfate,BMF") %>% distinct() %>% rename("PSfate_P" = "PSfate,P", "PSfate_B" = "PSfate,B", "PSfate_BMF" = "PSfate,BMF") %>%
+  filter(!CAS %in% c("a", "b", "c", "d", "e", "f"))
+wqb <- read_excel("SI Tables_Final_15_03_2022.xlsx", "SI Table 10", skip = 2) %>%
+  select(CAS, Chemical, "Final Psecotox,WQ (max)") %>% distinct() %>% rename("PSecotox_WQ" = "Final Psecotox,WQ (max)") %>%
+  filter(!is.na(PSecotox_WQ))
+ecotox <- read_excel("SI Tables_Final_15_03_2022.xlsx", "SI Table 11", skip = 2) %>%
+  select(CAS, Chemical, "Final Psecotox,ET (max)") %>% distinct() %>% rename("PSecotox_ET" = "Final Psecotox,ET (max)") 
+toxcast <- read_excel("SI Tables_Final_15_03_2022.xlsx", "SI Table 12", skip = 2) %>%
+  select("Chemical Detected in Milwaukee Estuary", "...2", "PSecotox,TC") %>% rename("Chemical" = "Chemical Detected in Milwaukee Estuary", "CAS" = "...2", "PSecotox_TC" = "PSecotox,TC") %>% filter(Chemical != "Chemical") %>%
+  rename("CAS" = "Chemical", "Chemical" = "CAS")
+qsar <- read_excel("SI Tables_Final_15_03_2022.xlsx", "SI Table 13", skip = 2) %>%
+  select(CAS, Chemical, "Psecotox,QS") %>% rename("PSecotox_QS" = "Psecotox,QS")
+RF <- read_excel("SI Tables_Final_15_03_2022.xlsx", "SI Table 15", skip = 2) %>% 
+  select(CAS, Chemical, "PSeffect,ER", "PSeffect,XR") %>% rename("PSeffect_ER" = "PSeffect,ER", "PSeffect_XR" = "PSeffect,XR")
+
+
+#get names
+names(detection_freq) #OK
+names(efate) #OK
+names(wqb) #OK
+names(ecotox) #OK
+names(toxcast) #OK
+names(qsar) #OK
+names(RF) #OK
+
+View(toxcast)
+
+#bind columns
+Final_Prioritization1 <- left_join(detection_freq, efate)
+Final_Prioritization2 <- left_join(Final_Prioritization1, wqb)
+Final_Prioritization3 <- left_join(Final_Prioritization2, ecotox)
+Final_Prioritization4 <- left_join(Final_Prioritization3, toxcast)
+Final_Prioritization5 <- left_join(Final_Prioritization4, qsar)
+Final_Prioritization6 <- left_join(Final_Prioritization5, RF)
+
+View(Final_Prioritization6)
+list(unique(is.na(Final_Prioritization6)))
+Final_Prioritization6$PSecotox_QS <- ifelse(is.na(Final_Prioritization6$PSecotox_QS), 0, Final_Prioritization6$PSecotox_QS)
+
+#make everything numeric and calculate CPS and CPSmax
+names(Final_Prioritization6)
+Final_Prioritization6$PSdetect_SF <- as.numeric(Final_Prioritization6$PSdetect_SF)
+Final_Prioritization6$PSdetect_TF <- as.numeric(Final_Prioritization6$PSdetect_TF)
+Final_Prioritization6$PSdetect_EC <- as.numeric(Final_Prioritization6$PSdetect_EC)
+Final_Prioritization6$PSfate_P <- as.numeric(Final_Prioritization6$PSfate_P)
+Final_Prioritization6$PSfate_B <- as.numeric(Final_Prioritization6$PSfate_B)
+Final_Prioritization6$PSfate_BMF <- as.numeric(Final_Prioritization6$PSfate_BMF)
+Final_Prioritization6$PSecotox_WQ <- as.numeric(Final_Prioritization6$PSecotox_WQ)
+Final_Prioritization6$PSecotox_ET <- as.numeric(Final_Prioritization6$PSecotox_ET)
+Final_Prioritization6$PSecotox_TC <- as.numeric(Final_Prioritization6$PSecotox_TC)
+Final_Prioritization6$PSecotox_QS <- as.numeric(Final_Prioritization6$PSecotox_QS)
+
+#CPS
+Final_Prioritization7 <- Final_Prioritization6 %>% gather(PSdetect_SF:PSeffect_XR, key = PS_type, value = PS) %>%
+  group_by(CAS, Chemical) %>% summarize("CPS" = sum(PS, na.rm = TRUE))
+Final_Prioritization8 <- left_join(Final_Prioritization6, Final_Prioritization7)
+View(Final_Prioritization8)
+
+#CPSmax
+Final_Prioritization8$CPSmax <- 100
+Final_Prioritization8$CPSmax <- ifelse(is.na(Final_Prioritization8$PSfate_P), Final_Prioritization8$CPSmax - 10, Final_Prioritization8$CPSmax)
+Final_Prioritization8$CPSmax <- ifelse(is.na(Final_Prioritization8$PSfate_B), Final_Prioritization8$CPSmax - 10, Final_Prioritization8$CPSmax)
+Final_Prioritization8$CPSmax <- ifelse(is.na(Final_Prioritization8$PSfate_BMF), Final_Prioritization8$CPSmax - 10, Final_Prioritization8$CPSmax)
+Final_Prioritization8$CPSmax <- ifelse(is.na(Final_Prioritization8$PSecotox_WQ), Final_Prioritization8$CPSmax - 15, Final_Prioritization8$CPSmax)
+Final_Prioritization8$CPSmax <- ifelse(is.na(Final_Prioritization8$PSecotox_ET), Final_Prioritization8$CPSmax - 10, Final_Prioritization8$CPSmax)
+Final_Prioritization8$CPSmax <- ifelse(is.na(Final_Prioritization8$PSecotox_TC), Final_Prioritization8$CPSmax - 5, Final_Prioritization8$CPSmax)
+Final_Prioritization8$CPSmax <- ifelse(is.na(Final_Prioritization8$PSecotox_QS), Final_Prioritization8$CPSmax - 5, Final_Prioritization8$CPSmax)
+
+#final PS
+Final_Prioritization9 <- Final_Prioritization8
+Final_Prioritization9$PS_chemical <- (Final_Prioritization9$CPS / Final_Prioritization9$CPSmax) *100
+
+#Priority Group
+Final_Prioritization9$Priority_Group <- ifelse(Final_Prioritization9$PS_chemical >= 50, "High Priority",
+                                               ifelse(Final_Prioritization9$PS_chemical < 25, "Low Priority",
+                                                      ifelse(Final_Prioritization9$PS_chemical < 50 & Final_Prioritization9$PS_chemical >= 25, "Medium Priority",
+                                                             "misc")))
+list(unique(Final_Prioritization9$Priority_Group))
+
+Final_Prioritization9$Data_Availability <- ifelse(Final_Prioritization9$CPSmax <= 70, "Significantly Data Limited",
+                                                  ifelse(Final_Prioritization9$CPSmax > 70 & Final_Prioritization9$CPSmax <= 90, "Moderately Data Limited",
+                                                         ifelse(Final_Prioritization9$CPSmax > 90, "Data Sufficient",
+                                                                "misc")))
+list(unique(Final_Prioritization9$Data_Availability))
+
+Final_Prioritization9$Priority_Bin <- paste(Final_Prioritization9$Priority_Group, Final_Prioritization9$Data_Availability, sep = ", ")
+Final_Prioritization10 <-Final_Prioritization9 %>% mutate(across(everything(), as.character))
+View(Final_Prioritization10)
+Final_Prioritization10[is.na(Final_Prioritization10)] <- "DL"
+write_xlsx(Final_Prioritization10, "Final_Prioritization_Table3.xlsx")
+
+#pull in remaining chemicals that were never detected
+chem.2017 <- read_excel("C:\\Users\\erinm\\OneDrive\\Desktop\\GLRI Project\\Milwauke\\Data for Papier\\Chemistry\\Compiled_Chemistry\\Chemistry Compiled_Final.xlsx", "2017") %>% filter(Media == "Water", !Site %in%c("UWM", "MIM-BK", "MED")) %>%
+  select(Chemical, CAS, Detect.code)
+chem.2018 <- read_excel("C:\\Users\\erinm\\OneDrive\\Desktop\\GLRI Project\\Milwauke\\Data for Papier\\Chemistry\\Compiled_Chemistry\\Chemistry Compiled_Final.xlsx", "2018")%>% filter(Media == "Water", !Site %in%c("UWM", "MIM-BK", "MED")) %>%
+  select(Chemical, CAS, Detect.code)
+
+chem_all_years <- bind_rows(chem.2017, chem.2018) %>% filter(Detect.code == "<") %>% distinct() %>% select(-Detect.code)
+detected <- Final_Prioritization9 %>% select(CAS, Chemical)
+never_detected <- anti_join(chem_all_years, detected)
+View(never_detected)
+
+Final_Prioritization11 <- bind_rows(Final_Prioritization10, never_detected)
+Final_Prioritization11$CPSmax <- ifelse(is.na(Final_Prioritization11$CPSmax), "NA", Final_Prioritization11$CPSmax)
+Final_Prioritization11$Priority_Group <- ifelse(is.na(Final_Prioritization11$Priority_Group), "Low Priority", Final_Prioritization11$Priority_Group)
+Final_Prioritization11$Data_Availability <- ifelse(is.na(Final_Prioritization11$Data_Availability), "NA", Final_Prioritization11$Data_Availability)
+Final_Prioritization11$Priority_Bin <- ifelse(is.na(Final_Prioritization11$Priority_Bin), "Low Priority (Never Detected)", Final_Prioritization11$Priority_Bin)
+
+Final_Prioritization11[is.na(Final_Prioritization11)] <- "0"
+View(Final_Prioritization11)
+
+write_xlsx(Final_Prioritization11, "Final_Prioritization_SI_Table16.xlsx")
+
+
+#make heatmap
+names(Final_Prioritization9)
+View(Final_Prioritization_forHeatmap)
+list(unique(Final_Prioritization9$Chemical))
+
+Final_Prioritization9$Chemical <- gsub("Hexahydrohexamethylcyclopentabenzopyran", "Galaxolide", Final_Prioritization9$Chemical)
+
+Final_Prioritization_forHeatmap <- Final_Prioritization9 %>% 
+  arrange(desc(PS_chemical)) %>% select(-c(CAS, Priority_Group, Data_Availability, Priority_Bin, CPS, CPSmax, PS_chemical)) %>%
+  column_to_rownames("Chemical")
+
+Final_Prioritization_forHeatmap$PSecotox_WQ <- (Final_Prioritization_forHeatmap$PSecotox_WQ / 15)*10
+Final_Prioritization_forHeatmap$PSecotox_TC <- (Final_Prioritization_forHeatmap$PSecotox_TC / 5)*10
+Final_Prioritization_forHeatmap$PSecotox_QS <- (Final_Prioritization_forHeatmap$PSecotox_QS / 5)*10
+Final_Prioritization_forHeatmap$PSeffect_ER <- (Final_Prioritization_forHeatmap$PSeffect_ER / 2.5)*10
+Final_Prioritization_forHeatmap$PSeffect_XR <- (Final_Prioritization_forHeatmap$PSeffect_XR / 2.5)*10
+
+Final_Prioritization_forHeatmap[is.na(Final_Prioritization_forHeatmap)] <- -10
+
+Final_Prioritization_forHeatmap <- Final_Prioritization_forHeatmap%>% 
+  rename("Spatial Frequency" = "PSdetect_SF", "Temporal Frequency" = "PSdetect_TF", "Environmental Distribution" = "PSdetect_EC",
+         "Persistence" = "PSfate_P", "Bioaccumulation" = "PSfate_B", "Biomagnification" = "PSfate_BMF",
+         "WQB Exceedence" = "PSecotox_WQ", "ECOTOX exceedence" = "PSecotox_ET", "ToxCast exceedence" = "PSecotox_TC",
+         "QSAR Exceedence" = "PSecotox_QS", "ER Effect Prediction" = "PSeffect_ER", "XR Effect Prediction" = "PSeffect_XR") 
+
+View(Final_Prioritization_forHeatmap)
+
+Final_Prioritization_forHeatmap_1 <- as.matrix(Final_Prioritization_forHeatmap)
+View(Final_Prioritization_forHeatmap)
+
+
+list(unique(Final_Prioritization9$Priority_Bin))
+final_prior <- Final_Prioritization9 %>% arrange(desc(PS_chemical)) %>% select(Priority_Bin)
+
+final_prior <- as.matrix(final_prior)
+View(final_prior)
+row_ha <- rowAnnotation(Classification = final_prior, col = list(Classification = c("High Priority, Data Sufficient" = "#000004",
+                                                                                    "High Priority, Significantly Data Limited" = "#221150",
+                                                                                    "Medium Priority, Data Sufficient" = "#5f187f",
+                                                                                    "Medium Priority, Moderately Data Limited" = "#982d80",
+                                                                                    "Medium Priority, Significantly Data Limited"  = "#d3436e",
+                                                                                    "Low Priority, Data Sufficient" = "#f8765c",
+                                                                                    "Low Priority, Moderately Data Limited" = "#febb81",
+                                                                               "Low Priority, Significantly Data Limited" = "#fcfdbf")))
+                                                                               
+
+milwaukee_heatmap <- Heatmap(Final_Prioritization_forHeatmap_1, col = c("darkgrey", "#440154","#414487","#2a788e","#22A884", "#7AD151","#FDE725FF"), column_title_side = "bottom",
+                             row_title_side = "left", right_annotation = row_ha, show_heatmap_legend = TRUE, 
+                             row_names_side = "left",
+                             row_title = "Detected Chemical", column_title = "Line of Evidence", cluster_rows = FALSE, cluster_columns = FALSE)
+
+
+milwaukee_heatmap1 <- draw(milwaukee_heatmap)
+
+ggsave("Final_Prioritization_Heatmap_23_03_2022.jpeg", milwaukee_heatmap, height = 20, width = 10)
+
+#size = 1000 x 1500 #
+
+
+#plot final prioritization score against max possible PS & bin
+Final_Prioritization10$PS_chemical <- as.numeric(Final_Prioritization10$PS_chemical)
+Final_Prioritization10$CPSmax <- as.numeric(Final_Prioritization10$CPSmax)
+Final_Prioritization10$Chemical <- gsub("Hexahydrohexamethylcyclopentabenzopyran", "Galaxolide", Final_Prioritization10$Chemical)
+PS_plot <- Final_Prioritization10 %>% ggscatter(x = "CPSmax", y = "PS_chemical", label = "Chemical", repel= TRUE) + 
+  geom_hline(yintercept = 50, linetype = "solid") + geom_hline(yintercept = 25, linetype = "solid") +
+  geom_vline(xintercept = 70, linetype = "solid") + geom_vline(xintercept = 90, linetype = "solid") +
+  ylab("Final Prioritization Score (PSchem)") + xlab("Maximum Cumulative Prioritization Score (CPSmax)")
+
+PS_plot
+ggsave("Final_Prioritization_Scatter.jpeg", PS_plot, height = 15, width = 15)
