@@ -1,0 +1,146 @@
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(writexl)
+
+
+qsar <- read_excel("QSAR_output.xlsx")
+names(qsar)
+list(unique(qsar$FISH_AD))
+
+#put in baseline MW
+qsar$MW <- as.numeric(qsar$MW)
+qsar$logKow <- as.numeric(qsar$logKow)
+qsar$algae.base <- (-1)*qsar$logKow - 1.23
+qsar$algae.base <- 10^(qsar$algae.base)
+qsar$algae.base <- qsar$algae.base * qsar$MW
+qsar$algae.base <- qsar$algae.base * 10^6
+qsar$daphnid.base <- (-.95)*qsar$logKow - 1.19
+qsar$daphnid.base <- 10^(qsar$daphnid.base)
+qsar$daphnid.base <- qsar$daphnid.base * qsar$MW
+qsar$daphnid.base <- qsar$daphnid.base * 10^6
+qsar$fish.base <- (-0.85)*qsar$logKow-1.14
+qsar$fish.base <- 10^qsar$fish.base
+qsar$fish.base <- qsar$fish.base * qsar$MW
+qsar$fish.base <- qsar$fish.base * 10^6
+
+#TEST conversion
+qsar$TEST_FISH_ppm <- as.numeric(qsar$TEST_FISH_ppm)
+qsar$TEST_FISH_ppm <-qsar$TEST_FISH_ppm *10^3
+
+qsar$TEST_INVERT_ppm <- as.numeric(qsar$TEST_INVERT_ppm)
+qsar$TEST_INVERT_ppm <-qsar$TEST_INVERT_ppm *10^3
+
+qsar$TEST_PLANT_ppm <- as.numeric(qsar$TEST_PLANT_ppm)
+qsar$TEST_PLANT_ppm <-qsar$TEST_PLANT_ppm *10^3
+
+#ECOSAR conversion
+qsar$ECOSAR_FISH_ppm <- as.numeric(qsar$ECOSAR_FISH_ppm)
+qsar$ECOSAR_FISH_ppm <- qsar$ECOSAR_FISH_ppm * 10^3
+
+qsar$ECOSAR_INVERT_ppm <- as.numeric(qsar$ECOSAR_INVERT_ppm)
+qsar$ECOSAR_INVERT_ppm <- qsar$ECOSAR_INVERT_ppm * 10^3
+
+qsar$ECOSAR_PLANT_ppm <- as.numeric(qsar$ECOSAR_PLANT_ppm)
+qsar$ECOSAR_PLANT_ppm <- qsar$ECOSAR_PLANT_ppm * 10^3
+
+#convert outside AD to outside AD
+qsar$TEST_FISH_ppm <- ifelse(is.na(qsar$TEST_FISH_ppm), "Outside_AD", qsar$TEST_FISH_ppm)
+qsar$TEST_INVERT_ppm <- ifelse(is.na(qsar$TEST_INVERT_ppm), "Outside_AD", qsar$TEST_INVERT_ppm)
+qsar$TEST_PLANT_ppm <- ifelse(is.na(qsar$TEST_PLANT_ppm), "Outside_AD", qsar$TEST_PLANT_ppm)
+
+qsar$ECOSAR_FISH_ppm <- ifelse(qsar$FISH_AD == "outside", "Outside_AD", qsar$ECOSAR_FISH_ppm)
+qsar$ECOSAR_INVERT_ppm <- ifelse(qsar$INVERT_AD == "outside", "Outside_AD", qsar$ECOSAR_INVERT_ppm)
+qsar$ECOSAR_PLANT_ppm <- ifelse(qsar$PLANT_AD == "outside", "Outside_AD", qsar$ECOSAR_PLANT_ppm)
+
+#calculate consensus estimate and the number of qsars
+names(qsar1)
+qsar1 <- qsar %>% select(-(SMILES:MW), -FISH_AD, -INVERT_AD, -PLANT_AD) %>% gather(TEST_FISH_ppm:fish.base, key = "QSAR_type", value = "EC")
+qsar1$spp <- ifelse(qsar1$QSAR_type %in% c("TEST_FISH_ppm", "ECOSAR_FISH_ppm", "fish.base"), "Fish",
+                    ifelse(qsar1$QSAR_type %in% c("TEST_INVERT_ppm", "ECOSAR_INVERT_ppm", "daphnid.base"), "Invert",
+                           ifelse(qsar1$QSAR_type %in% c("TEST_PLANT_ppm", "ECOSAR_PLANT_ppm", "algae.base"), "Plant",
+                                  "misc")))
+list(unique(qsar1$spp))
+qsar1$EC <- as.numeric(qsar1$EC)
+
+qsar2 <- qsar1 %>% group_by(CAS, Chemical, spp) %>% summarize(mean_EC = mean(EC, na.rm = TRUE), n_EC = n_distinct(EC, na.rm = TRUE))
+View(qsar2)
+                                                              
+qsar3 <- qsar2 %>% group_by(CAS, Chemical) %>% summarize(minEC = min(mean_EC)) %>% rename("mean_EC" = "minEC")
+View(qsar3)
+
+qsar4 <- left_join(qsar3,qsar2)
+View(qsar4)
+
+#print
+write_xlsx(qsar4, "QSAR_BM.xlsx")
+
+#compare qsar benchmarks to detection data
+chem_2017 <- read_excel("C:\\Users\\erinm\\OneDrive\\Desktop\\GLRI Project\\Milwauke\\Data for Papier\\Chemistry\\Compiled_Chemistry\\Chemistry Compiled_Final.xlsx", "2017") %>%
+  filter(Media == "Water", Detect == "Yes", !Site %in% c("UWM", "MIM-BK", "MED"))
+chem_2018 <- read_excel("C:\\Users\\erinm\\OneDrive\\Desktop\\GLRI Project\\Milwauke\\Data for Papier\\Chemistry\\Compiled_Chemistry\\Chemistry Compiled_Final.xlsx", "2018") %>%
+  filter(Media == "Water", Detect == "Yes", !Site %in% c("UWM", "MIM-BK", "MED"))
+chem_2018$Site.code <- as.double(chem_2018$Site.code)
+chem_2018$Year <- as.double(chem_2018$Year)
+chem_2018$p.code <- as.double(chem_2018$p.code)
+chem_2018$Schedule <- as.double(chem_2018$Schedule)
+
+chemistry <- bind_rows(chem_2017, chem_2018) %>% select(Site, Chemical, CAS, Year, detect.con.ppb, RL.ppb, Detect.code)
+View(chemistry)
+chemistry$Detect.code <- ifelse(is.na(chemistry$Detect.code), "D", chemistry$Detect.code)
+chemistry$Concentration <- ifelse(chemistry$Detect.code == "M", chemistry$RL.ppb /4, chemistry$detect.con.ppb)
+chemistry$Site_Year <- paste(chemistry$Site, chemistry$Year, sep = "_")
+
+chemistry1 <- chemistry %>% select(Site_Year, Chemical, CAS, Concentration)
+list(unique(chemistry1$CAS))
+
+#Bind together files
+names(qsar4)
+qsar_comp <- left_join(chemistry1, qsar4, by = "CAS")
+View(qsar_comp)
+
+#calculate TQ
+names(qsar_comp)
+
+qsar_comp$TQ <- qsar_comp$Concentration / qsar_comp$mean_EC
+
+qsar_comp$Exceed <- ifelse(qsar_comp$TQ > 1, "Yes", "No")
+
+qsar_exceed <- qsar_comp %>% filter(Exceed == "Yes") %>% group_by(CAS) %>% summarize(site_exceed = n_distinct(Site_Year), maxTQ = max(TQ))
+qsar_exceed$EF <- qsar_exceed$site_exceed / 19
+
+qsar_other <- qsar_comp %>% filter(Exceed == "No") %>% group_by(CAS) %>% summarize(maxTQ = max(TQ))
+qsar_other$EF <- 0
+qsar_other$site_exceed <- 0
+
+qsar_exceed1 <- bind_rows(qsar_exceed, qsar_other)
+View(qsar_exceed1)
+
+#group chemicals 
+
+names(qsar4)
+qsar_output <- left_join(qsar4, qsar_exceed1) %>% select(Chemical, CAS, n_EC, EF, maxTQ) 
+
+qsar_output$PSEF <- ifelse(qsar_output$EF >= 0.5, 5, 
+                           ifelse(qsar_output$EF < 0.5 & qsar_output$EF > 0, 2.5,
+                                  0))
+
+qsar_output$benchmark_coefficient <- ifelse(qsar_output$n_EC == 3, 1,
+                                            ifelse(qsar_output$n_EC == 2, 0.5, 0.25))
+
+View(qsar_output)
+
+qsar_output$PS <- qsar_output$PSEF * qsar_output$benchmark_coefficient
+
+write_xlsx(qsar_output, "QSAR_LoE.xlsx")
+
+#create graph
+names(qsar_comp)
+list(unique(qsar_comp$Chemical.x))
+
+qsar_comp$Chemical.x <- gsub("Hexahydrohexamethylcyclopentabenzopyran (HHCB)", "Galaxolide (HHCB)", qsar_comp$Chemical.x)
+
+qsar_plot <- qsar_comp %>% select(-Chemical.y) %>% rename("Chemical" = "Chemical.x", "Detection [ ] (ug/L)" = "Concentration", "QSAR Benchmark" = "mean_EC") %>% gather(`Detection [ ] (ug/L)`:`QSAR Benchmark`, key = "Concentration Type", value = "Concentration (ug/L)") %>%
+  ggscatter("Concentration (ug/L)", "Chemical", color = "Concentration Type", palette = c("black", "darkred"), legend = "right", size = 3) + scale_x_log10()+ font("xy.text", size = 12) + font("legend.title", size = 18)+ font("y.title", size = 18)+ font("x.title", size = 18)  + font("legend.text", size = 16)
+
+ggsave("QSAR_plot.jpeg", qsar_plot, height = 15, width = 12)
