@@ -1,0 +1,69 @@
+library(dplyr)
+library(readxl)
+library(writexl)
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(factoextra)
+library(forcats)
+library(gridExtra)
+
+#PB analysis 
+
+PB <- read_excel("PBT_data.xlsx")
+
+names(PB)
+
+PB_1 <- PB %>% select(CAS, Chemical, "Consensus t1/2 Estimate (d)", "Consensus BCF Estimate (L/kg)", "BMF Estimate") %>% gather("fate.characteristic", "value", `Consensus t1/2 Estimate (d)`:`BMF Estimate`)
+PB_1
+
+P <- PB_1 %>% filter(fate.characteristic == "Consensus t1/2 Estimate (d)")
+P$value <- as.numeric(P$value)
+P$`Persistence Classification` <- ifelse(P$value < 40, "Non-Persistent", 
+                                         (ifelse(P$value >= 40 & P$value < 60, "Persistent",
+                                                 ifelse(P$value >= 60, "Very Persistent", "Non-Persistent"))))
+P$`Persistence Classification` <- ifelse(is.na(P$`value`), "Data Limited", P$`Persistence Classification`)
+P <- P %>% rename("Aquatic Half Life (d)" = value)
+
+B <- PB_1 %>% filter(fate.characteristic == "Consensus BCF Estimate (L/kg)")
+B$value <- as.numeric(B$value)
+B$`Bioaccumulation Classification` <- ifelse(B$value < 2000, "Non-Bioaccumulative",
+                                             (ifelse(B$value >= 2000 & B$value < 5000, "Bioaccumulative",
+                                                     ifelse(B$value >=5000, "Very Bioaccumulative", "Non-Bioaccumulative"))))
+B$`Bioaccumulation Classification` <- ifelse(is.na(B$value), "Data Limited", B$`Bioaccumulation Classification`)
+B <- B %>% rename("Bioconcentration Factor (L/kg)" = value)
+B <- B %>% mutate(`Bioaccumulation Classification` = factor(`Bioaccumulation Classification`, levels = c("Data Limited", "Non-Bioaccumulative", "Bioaccumulative", "Very Bioaccumulative")))
+
+BMF <- PB_1 %>% filter(fate.characteristic == "BMF Estimate")
+BMF$value <- as.numeric(BMF$value)
+BMF$`Biomagnification Classification` <- ifelse(BMF$value >= 1, "Likely to Biomagnify", "Unlikely to Biomagnify")
+BMF$`Biomagnification Classification` <- ifelse(is.na(BMF$value), "Data Limited", BMF$`Biomagnification Classification`)
+BMF <- BMF %>% rename("Biomagnification Factor" = value)
+BMF <- BMF %>% mutate(`Biomagnification Classification` = factor(`Biomagnification Classification`, levels = c("Data Limited", "Unlikely to Biomagnify", "Likely to Biomagnify")))
+
+#P figure
+
+P$`Aquatic Half Life (d)` <- as.numeric(P$`Aquatic Half Life (d)`)
+fig.1 <- P %>% ggbarplot(x = "Chemical", y = "Aquatic Half Life (d)",  
+                                fill = "Persistence Classification", orientation = "horiz", sort.val = "asc") + font("xy.text", size = 20) + font("title", size = 30) + font("y.title", size = 35)+ font("x.title", size = 35) + rremove("legend.title") + font("legend.text", size = 25) + scale_fill_viridis_d()
+ggsave("Persistence_Figure.jpg", width = 20, height = 25)
+
+P$`Persistence Classification` <- as.factor(P$`Persistence Classification`)
+summary(P)
+
+#B figure
+B$`Bioconcentration Factor (L/kg)` <- as.numeric(B$`Bioconcentration Factor (L/kg)`)
+fig.2 <- B %>% ggbarplot(x = "Chemical", y = "Bioconcentration Factor (L/kg)",  
+                         fill = "Bioaccumulation Classification", orientation = "horiz", sort.val= "asc") + font("xy.text", size = 20) + font("title", size = 30)+ font("y.title", size = 35)+ font("x.title", size = 35) + rremove("legend.title")+ font("legend.text", size = 25) + scale_fill_viridis_d()
+ggsave("Bioaccumulation_Figure.jpg", width = 20, height = 25)
+
+B$`Bioaccumulation Classification` <- as.factor(B$`Bioaccumulation Classification`)
+summary(B)
+
+#BMF figure
+fig.3 <- BMF %>% ggbarplot(x = "Chemical", y = "Biomagnification Factor",  
+                           fill = "Biomagnification Classification", orientation = "horiz", sort.val = "asc") + font("xy.text", size = 20) + font("title", size = 30)+ font("y.title", size = 35)+ font("x.title", size = 35) + rremove("legend.title")+ font("legend.text", size = 25) + scale_fill_viridis_d()
+ggsave("Biomagnification_Figure.jpg", width = 20, height = 25)
+BMF$`Biomagnification Factor` <- as.numeric(BMF$`Biomagnification Factor`)
+BMF$`Biomagnification Classification` <- as.factor(BMF$`Biomagnification Classification`)
+summary(BMF)
