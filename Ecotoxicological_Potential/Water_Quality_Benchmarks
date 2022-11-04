@@ -1,0 +1,113 @@
+library(readxl)
+library(writexl)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggpubr)
+library(toxEval)
+library(forcats)
+library(viridis)
+
+chem.2017 <- read_excel("Chemistry Compiled_Final.xlsx", "2017") %>% filter(Media == "Water")
+
+chem.2017_1 <- chem.2017 %>% select("Site", "Year", "Chemical", "CAS", "detect.con.ppb") %>% rename("Concentration" = "detect.con.ppb")
+
+#compare to benchmarks#
+benchmarks <- read_excel("Water Quality Benchmarks.xlsx")
+benchmarks_1 <- benchmarks %>% select("CAS", "Benchmark Classification (Prioritization Framework)", "Value")
+
+chem2017_v_benchmarks <- left_join(chem.2017_1, benchmarks_1)
+chem2017_v_benchmarks$TQ <- chem2017_v_benchmarks$Concentration/chem2017_v_benchmarks$Value
+
+###2018###
+chem.2018 <- read_excel("Chemistry Compiled_Final.xlsx", "2018") %>% filter(Media == "Water")
+chem.2018 <- chem.2018 %>% filter(Detect == "Yes", !Site %in% c("MED", "UWM")) 
+
+chem.2018_1 <- chem.2018 %>% select("Site", "Year", "Chemical", "CAS", "detect.con.ppb") %>% rename("Concentration" = "detect.con.ppb")
+
+chem2018_v_benchmarks <- left_join(chem.2018_1, benchmarks_1)
+chem2018_v_benchmarks$TQ <- chem2018_v_benchmarks$Concentration/chem2018_v_benchmarks$Value
+
+chem2017_v_benchmarks$Year <- as.character(chem2017_v_benchmarks$Year)
+wq_comparison <- bind_rows(chem2017_v_benchmarks, chem2018_v_benchmarks)
+
+wq_comparison$TQ_exceed <- ifelse(wq_comparison$TQ >= 1, "Yes",
+                                         "No")
+
+wq_comparison$SY <- paste(wq_comparison$Site, "-", wq_comparison$Year)
+
+list(unique(wq_comparison$`Benchmark Classification (Prioritization Framework)`))
+wq_comparison$bench_coeff <- ifelse(wq_comparison$`Benchmark Classification (Prioritization Framework)` == "Acute Water Quality Guideline", 1.0,
+                                    ifelse(wq_comparison$`Benchmark Classification (Prioritization Framework)` == "Acute Screening Criteria", 0.75,
+                                           ifelse(wq_comparison$`Benchmark Classification (Prioritization Framework)` == "Chronic Water Quality Guideline", 0.5,
+                                                  ifelse(wq_comparison$`Benchmark Classification (Prioritization Framework)` == "Chronic Screening Criteria", 0.25,
+                                                         0))))
+write_csv(wq_comparison, "WQB_comparison_long.csv")
+
+wq_comparison_1 <- wq_comparison %>% group_by(CAS, Chemical, `Benchmark Classification (Prioritization Framework)`) %>%
+  summarize(max_bench_coeff = max(bench_coeff), maxTQ = max(TQ))
+
+wq_comparison_2 <- wq_comparison %>% filter(TQ_exceed == "Yes") %>% group_by(CAS, Chemical, `Benchmark Classification (Prioritization Framework)`) %>%
+  summarize(n.sites_exceed = length(unique(SY)))
+
+wq_comparison_3 <- left_join(wq_comparison_1, wq_comparison_2)
+
+nobenchmark <- wq_comparison_3 %>% filter(max_bench_coeff == 0)
+nobenchmark$PSwq <- "DL"
+
+wq_comparison_4 <- wq_comparison_3 %>% filter(max_bench_coeff != 0)
+wq_comparison_4$Freq_exceed <- wq_comparison_4$n.sites_exceed / 19
+
+wq_comparison_4$PSfreq <- ifelse(wq_comparison_4$Freq_exceed >= 0.5, 15,
+                                 ifelse(wq_comparison_4$Freq_exceed > 0 & wq_comparison_4$Freq_exceed < 0.5, 7.5, 
+                                        0))
+
+wq_comparison_4$PSwq <- wq_comparison_4$max_bench_coeff * wq_comparison_4$PSfreq
+wq_comparison_4$PSwq <- as.character(wq_comparison_4$PSwq)
+
+wq_comparison_5 <- bind_rows(wq_comparison_4, nobenchmark)
+wq_comparison_5$`Benchmark Classification (Prioritization Framework)` <- gsub("NA No Benchmark", "No Benchmark", wq_comparison_5$`Benchmark Classification (Prioritization Framework)`)
+wq_comparison_5$`Water Quality Benchmark(s) Available?` <- ifelse(wq_comparison_5$`Benchmark Classification (Prioritization Framework)` == "No Benchmark", "No",
+                                                                  "Yes")
+wq_comparison_5$`Exceed Benchmark?` <- ifelse(wq_comparison_5$maxTQ > 1, "Yes",
+                                                                  "No")
+
+names(wq_comparison_5)
+
+write_csv(wq_comparison_5, "WQB_comparison_summary.csv")
+
+#filter for maxPS
+wq_comparison_6 <- wq_comparison_5 %>% group_by(Chemical, CAS) %>% summarize(maxPSwq = max(PSwq), maxTQ = max(maxTQ))
+
+write_csv(wq_comparison_6, "WQB_comparison_maxPwq_summary.csv")
+
+#make graph
+
+all.detect <- wq_comparison %>% select(Chemical, CAS, Concentration, "Benchmark Classification (Prioritization Framework)", Value, SY)
+names(all.detect)
+summary(all.detect$`Benchmark Classification (Prioritization Framework)`)
+all.detect$`Benchmark Type` <- ifelse(all.detect$`Benchmark Classification (Prioritization Framework)` == "NA No Benchmark" | all.detect$`Benchmark Classification (Prioritization Framework)` == "NA's", "NA_Benchmark", all.detect$`Benchmark Classification (Prioritization Framework)`)
+
+all.detect_1 <- all.detect %>% filter(!`Benchmark Classification (Prioritization Framework)` %in% ("No Benchmark"), !is.na(`Benchmark Classification (Prioritization Framework)`)) %>% relocate("Value", .after = "Concentration") %>%
+  gather(Concentration:Value, key = "Concentration_Type", value = "Concentration")
+
+names(all.detect_1)
+
+all.detect_1$Concentration <- as.numeric(all.detect_1$Concentration)
+View(all.detect_1)
+
+all.detect_1$`Benchmark Classification (Prioritization Framework)` <- as.character(all.detect_1$`Benchmark Classification (Prioritization Framework)`)
+
+all.detect_1$`Benchmark Type` <- ifelse(all.detect_1$Concentration_Type == "Concentration", "Detect Concentration", all.detect_1$`Benchmark Classification (Prioritization Framework)`)
+
+all.detect_1$`Benchmark Type` <- fct_relevel(all.detect_1$`Benchmark Type`, c("Acute Water Quality Guideline", "Acute Screening Criteria", "Chronic Water Quality Guideline", "Chronic Screening Criteria", "Detect Concentration"))
+
+all.detect_1$Concentration <- as.numeric(all.detect_1$Concentration)
+
+wq.plot <- all.detect_1 %>% filter(`Benchmark Type` != "NA No Benchmark") %>% 
+  ggscatter(x="Concentration", y="Chemical", color = "Benchmark Type", size = 8, legend = "right") + scale_x_log10() + 
+  theme(text = element_text(size=30)) + theme(axis.title = element_text(size = 35)) + 
+  labs(x= "Concentration (ug/L)") + theme(title = element_text(size = 40)) + 
+  theme(legend.title = element_text(size = 30))+ scale_color_viridis_d(option = "D")
+
+ggsave("WQ_exceedence.jpg", height = 20, width = 25)
